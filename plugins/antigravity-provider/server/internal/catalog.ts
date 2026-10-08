@@ -24,11 +24,11 @@ export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<
   const output = await probe({ launch, args: ["models"], cwd });
   const models: ProviderModel[] = [];
   for (const line of output.trim().split(/\r?\n/)) {
-    const [id, label, ...extra] = line.split("\t");
-    if (!id || !label || extra.length > 0)
-      throw new AntigravityError("Invalid `agy models` output", "INVALID_CATALOG");
-    if (models.some((model) => model.id === id))
-      throw new AntigravityError(`Duplicate Antigravity model: ${id}`, "INVALID_CATALOG");
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes("\t")) continue;
+    const [id, label, ...extra] = trimmed.split("\t");
+    if (!id || !label || extra.length > 0) continue;
+    if (models.some((model) => model.id === id)) continue;
     models.push({ id, label });
   }
   return { models, modes, thinkingOptions: [], defaultMode: "full-access" };

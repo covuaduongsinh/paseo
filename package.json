@@ -128,7 +128,11 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "44.2.0",
+    "fbjs": "^3.0.5",
     "get-port-cli": "^3.0.0",
+    "hermes-parser": "^0.37.0",
+    "hermes-transform": "^0.37.0",
+    "invariant": "^2.2.4",
     "js-yaml": "^4.1.1",
     "knip": "^5.82.1",
     "lefthook": "^2.1.6",
@@ -148,5 +152,8 @@
     "react-dom": "19.1.0",
     "react-native-reanimated": "4.3.1",
     "react-native-worklets": "0.8.3"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "^6.1.2"
   }
 }

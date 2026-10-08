@@ -72,8 +72,9 @@ if (patchFilesByCwd.size === 0) {
 }
 
 const isWindows = process.platform === "win32";
-const cmd = isWindows ? "patch-package.cmd" : "patch-package";
-
+const localBin = join(process.cwd(), "node_modules", ".bin", isWindows ? "patch-package.cmd" : "patch-package");
+const cmd = existsSync(localBin) ? localBin : (isWindows ? "npx.cmd" : "npx");
+const baseArgs = existsSync(localBin) ? [] : ["patch-package"];
 let groupIndex = 0;
 for (const [cwd, files] of patchFilesByCwd) {
   groupIndex += 1;
@@ -86,7 +87,8 @@ for (const [cwd, files] of patchFilesByCwd) {
 
   let result;
   try {
-    result = spawnSync(cmd, ["--patch-dir", relative(cwd, tempPatchDir)], {
+    const args = [...baseArgs, "--patch-dir", relative(cwd, tempPatchDir)];
+    result = spawnSync(cmd, args, {
       cwd,
       shell: isWindows,
       stdio: "inherit",

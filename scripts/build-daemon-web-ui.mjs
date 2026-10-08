@@ -19,9 +19,10 @@ function fmtMiB(bytes) {
 
 function run(command, args, options) {
   return new Promise((resolve, reject) => {
+    const isWindows = process.platform === "win32";
     const child = spawn(command, args, {
       stdio: "inherit",
-      shell: false,
+      shell: isWindows,
       ...options,
     });
     child.on("error", reject);
