@@ -74,7 +74,22 @@ export class Session {
     });
     this.publishFullAccessNotice();
     this.publishConfig();
-    this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    const defaultCommands = [
+      { name: "review", description: "Rà soát, kiểm tra code và phát hiện lỗi/bảo mật", argumentHint: "[files/diff]" },
+      { name: "test", description: "Tạo và chạy unit test cho các module", argumentHint: "[target]" },
+      { name: "refactor", description: "Tối ưu hóa cấu trúc code và hiệu năng", argumentHint: "[files]" },
+      { name: "explain", description: "Giải thích luồng hoạt động của mã nguồn hoặc kiến trúc", argumentHint: "[question]" },
+      { name: "commit", description: "Tạo git commit message chuẩn Conventional Commits", argumentHint: "[context]" },
+      { name: "doc", description: "Viết tài liệu hướng dẫn và chú thích kỹ thuật Markdown/JSDoc", argumentHint: "[topic]" },
+      { name: "fix", description: "Phân tích và sửa lỗi cụ thể trong codebase", argumentHint: "[error/issue]" },
+      { name: "plan", description: "Lập kế hoạch triển khai tính năng từng bước", argumentHint: "[goal]" },
+      { name: "paseo", description: "Quản lý dự án, cấu hình và workspace Paseo", argumentHint: "[action]" },
+      { name: "paseo-advisor", description: "Xin ý kiến phản biện/tư vấn kiến trúc độc lập", argumentHint: "[topic]" },
+      { name: "paseo-committee", description: "Hội đồng AI đánh giá nguyên nhân gốc rễ và giải pháp", argumentHint: "[problem]" },
+      { name: "paseo-handoff", description: "Chuyển giao ngữ cảnh tác vụ cho agent khác", argumentHint: "[agent]" },
+      { name: "paseo-help", description: "Trợ giúp cài đặt và cấu hình hệ sinh thái Paseo" },
+    ];
+    this.emit({ type: "session.commands", sessionId: this.options.id, commands: defaultCommands });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
