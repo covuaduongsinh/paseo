@@ -27,11 +27,16 @@ export function signalProcess(options: SignalOptions): void | Promise<void> {
   }
 }
 
+/**
+ * Reaping is best effort. taskkill reports an already-exited PID, a child that died between the
+ * walk and the kill, and a protected process the same way it reports real failures, and none of
+ * them may turn a stop or a close into a failed request.
+ */
 async function killTree(plan: Extract<SignalPlan, { type: "tree" }>): Promise<void> {
   try {
     await execCommand(plan.command, plan.args, { shell: false });
   } catch (error) {
-    // taskkill reports an already-exited PID with exit code 128.
-    if (!(error instanceof Error && "code" in error && error.code === 128)) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[antigravity] ${plan.command} ${plan.args.join(" ")} failed: ${message}`);
   }
 }

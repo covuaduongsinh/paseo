@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   ProviderCatalog,
   ProviderLaunch,
@@ -20,18 +21,88 @@ const modes: readonly ProviderMode[] = [
   },
 ];
 
-export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<ProviderCatalog> {
+// `status()` and the first `session.open` ask for the same list seconds apart. Discovery costs a
+// full CLI start each time, so they share one result; an explicit catalog request still refreshes.
+const CATALOG_TTL_MS = 60_000;
+const cached = new Map<string, { at: number; catalog: ProviderCatalog }>();
+const inFlight = new Map<string, Promise<ProviderCatalog>>();
+
+export function launchKey(launch: ProviderLaunch): string {
+  const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
+  return createHash("sha256")
+    .update(JSON.stringify([launch.command, launch.args, env]))
+    .digest("hex");
+}
+
+interface CatalogOptions {
+  cwd?: string;
+  force?: boolean;
+}
+
+export async function getCatalog(
+  launch: ProviderLaunch,
+  options: CatalogOptions = {},
+): Promise<ProviderCatalog> {
+  const key = launchKey(launch);
+  if (options.force) {
+    cached.delete(key);
+    inFlight.delete(key);
+  } else {
+    const entry = cached.get(key);
+    if (entry && Date.now() - entry.at < CATALOG_TTL_MS) return entry.catalog;
+    const pending = inFlight.get(key);
+    if (pending) return pending;
+  }
+  const discovery = discover(launch, options.cwd)
+    .then((catalog) => {
+      cached.set(key, { at: Date.now(), catalog });
+      return catalog;
+    })
+    .finally(() => {
+      if (inFlight.get(key) === discovery) inFlight.delete(key);
+    });
+  inFlight.set(key, discovery);
+  return discovery;
+}
+
+async function discover(launch: ProviderLaunch, cwd?: string): Promise<ProviderCatalog> {
   const output = await probe({ launch, args: ["models"], cwd });
+  const models = parseModels(output);
+  if (models.length === 0)
+    throw new AntigravityError(
+      `Antigravity listed no models. \`agy models\` printed: ${excerpt(output)}`,
+      "EMPTY_CATALOG",
+    );
+  return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
+}
+
+const IDENTIFIER = /^[\w./:+-]+$/;
+const HEADER = /^(id|model|models|name)$/i;
+
+/**
+ * `agy models` prints `id<TAB>label`. Accept wider rows and space-aligned columns too: an output
+ * tweak must not empty the model picker.
+ */
+export function parseModels(output: string): ProviderModel[] {
   const models: ProviderModel[] = [];
-  for (const line of output.trim().split(/\r?\n/)) {
+  for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed || !trimmed.includes("\t")) continue;
-    const [id, label, ...extra] = trimmed.split("\t");
-    if (!id || !label || extra.length > 0) continue;
+    if (!trimmed || /^[-=|+_\s]+$/.test(trimmed)) continue;
+    const columns = (trimmed.includes("\t") ? trimmed.split("\t") : trimmed.split(/\s{2,}/))
+      .map((column) => column.trim())
+      .filter(Boolean);
+    const [id, label] = columns;
+    if (!id || !label || !IDENTIFIER.test(id) || HEADER.test(id)) continue;
     if (models.some((model) => model.id === id)) continue;
     models.push({ id, label });
   }
-  return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
+  return models;
+}
+
+function excerpt(output: string): string {
+  const trimmed = output.trim();
+  if (!trimmed) return "nothing";
+  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
 }
 
 export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus> {

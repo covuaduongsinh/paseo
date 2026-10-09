@@ -13,7 +13,8 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
-import { signalPlan } from "./internal/signals.js";
+import { parseModels } from "./internal/catalog.js";
+import { signalPlan, signalProcess } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -160,6 +161,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
   const h = await harness();
   expect(h.connection.capabilities).toEqual([
     "prompt.message",
+    "prompt.command",
     "prompt.image",
     "session.configure",
     "session.persistence",
@@ -789,3 +791,98 @@ it.runIf(process.platform === "win32")(
     });
   },
 );
+
+describe("resilience", () => {
+  it("keeps a turn alive through banners, update notices and unknown events", async () => {
+    const h = await harness({ AGY_TEST_NOISE: "yes" });
+    await h.open();
+    expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({
+      type: "session.turn",
+      state: "completed",
+    });
+    expect(h.events.filter((event) => event.type === "session.runtime_failed")).toEqual([]);
+    expect(
+      h.events.some(
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text.length > 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("runs a slash command as its instruction and still shows the typed command", async () => {
+    const h = await harness();
+    await h.open();
+    const commands = await h.wait((event) => event.type === "session.commands");
+    if (commands.type !== "session.commands") throw new Error("Missing commands");
+    expect(commands.commands.map((command) => command.name)).toContain("review");
+    await h.connection.send({
+      type: "session.prompt",
+      sessionId: "s",
+      prompt: {
+        clientMessageId: "command",
+        delivery: "auto",
+        input: { type: "command", name: "review", arguments: "src/app.ts" },
+      },
+    });
+    expect(
+      await h.wait(
+        (event) => event.type === "session.prompt_result" && event.clientMessageId === "command",
+      ),
+    ).toMatchObject({ result: { type: "turn" } });
+    expect(await h.completed("command")).toMatchObject({ state: "completed" });
+    const sent = (await h.records()).find((entry) => entry.input).input.message.content;
+    expect(sent).toContain("src/app.ts");
+    expect(sent).toContain("Rà soát code");
+    expect(
+      h.events.find(
+        (event) => event.type === "timeline.item" && event.item.type === "user_message",
+      ),
+    ).toMatchObject({ item: { text: "/review src/app.ts" } });
+  });
+
+  it("retries discovery when the first probe outlives its deadline", async () => {
+    process.env.PASEO_ANTIGRAVITY_PROBE_TIMEOUT_MS = "1200";
+    try {
+      const h = await harness({ AGY_TEST_SLOW_PROBE_MS: "5000" });
+      await h.request({ type: "catalog", requestId: "slow" });
+      const event = h.events.find((entry) => entry.type === "catalog");
+      expect(h.events.filter((entry) => entry.type === "request.failed")).toEqual([]);
+      expect(event).toBeDefined();
+      if (event?.type !== "catalog") throw new Error("Missing catalog");
+      expect(event.catalog.models).toHaveLength(11);
+      expect(
+        (await h.records()).filter((entry) => entry.args && entry.args.includes("models")),
+      ).toHaveLength(2);
+    } finally {
+      delete process.env.PASEO_ANTIGRAVITY_PROBE_TIMEOUT_MS;
+    }
+  });
+
+  it.each(["wide", "spaces"])("reads a %s model table", async (format) => {
+    const h = await harness({ AGY_TEST_MODELS_FORMAT: format });
+    await h.request({ type: "catalog", requestId: `format-${format}` });
+    const event = h.events.find((entry) => entry.type === "catalog");
+    if (event?.type !== "catalog") throw new Error("Missing catalog");
+    expect(event.catalog.models).toContainEqual({
+      id: "gemini-3.8-flash-low",
+      label: "Gemini 3.8 Flash (Low)",
+    });
+    expect(event.catalog.models).toHaveLength(11);
+  });
+
+  it("reports an empty catalog with what the CLI actually printed", async () => {
+    const h = await harness({ AGY_TEST_MODELS_FORMAT: "wide" });
+    expect(parseModels("")).toEqual([]);
+    expect(parseModels("No models available for this account.")).toEqual([]);
+    await h.request({ type: "catalog", requestId: "ok" });
+    expect(h.events.find((entry) => entry.type === "request.failed")).toBeUndefined();
+  });
+
+  it("treats a failed Windows tree kill as a diagnostic, not a failure", async () => {
+    await expect(
+      Promise.resolve(signalProcess({ platform: "win32", pid: 0x7fffffff, signal: "SIGKILL" })),
+    ).resolves.toBeUndefined();
+  });
+});

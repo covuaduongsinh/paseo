@@ -13,6 +13,7 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
+import { providerCommands } from "./commands.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
@@ -74,22 +75,11 @@ export class Session {
     });
     this.publishFullAccessNotice();
     this.publishConfig();
-    const defaultCommands = [
-      { name: "review", description: "Rà soát, kiểm tra code và phát hiện lỗi/bảo mật", argumentHint: "[files/diff]" },
-      { name: "test", description: "Tạo và chạy unit test cho các module", argumentHint: "[target]" },
-      { name: "refactor", description: "Tối ưu hóa cấu trúc code và hiệu năng", argumentHint: "[files]" },
-      { name: "explain", description: "Giải thích luồng hoạt động của mã nguồn hoặc kiến trúc", argumentHint: "[question]" },
-      { name: "commit", description: "Tạo git commit message chuẩn Conventional Commits", argumentHint: "[context]" },
-      { name: "doc", description: "Viết tài liệu hướng dẫn và chú thích kỹ thuật Markdown/JSDoc", argumentHint: "[topic]" },
-      { name: "fix", description: "Phân tích và sửa lỗi cụ thể trong codebase", argumentHint: "[error/issue]" },
-      { name: "plan", description: "Lập kế hoạch triển khai tính năng từng bước", argumentHint: "[goal]" },
-      { name: "paseo", description: "Quản lý dự án, cấu hình và workspace Paseo", argumentHint: "[action]" },
-      { name: "paseo-advisor", description: "Xin ý kiến phản biện/tư vấn kiến trúc độc lập", argumentHint: "[topic]" },
-      { name: "paseo-committee", description: "Hội đồng AI đánh giá nguyên nhân gốc rễ và giải pháp", argumentHint: "[problem]" },
-      { name: "paseo-handoff", description: "Chuyển giao ngữ cảnh tác vụ cho agent khác", argumentHint: "[agent]" },
-      { name: "paseo-help", description: "Trợ giúp cài đặt và cấu hình hệ sinh thái Paseo" },
-    ];
-    this.emit({ type: "session.commands", sessionId: this.options.id, commands: defaultCommands });
+    this.emit({
+      type: "session.commands",
+      sessionId: this.options.id,
+      commands: [...providerCommands],
+    });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
@@ -222,6 +212,17 @@ export class Session {
     }
     if (this.state.type !== "dormant") return;
     this.reportedDenials.clear();
+    try {
+      await this.launchDriver();
+    } catch (error) {
+      // The CLI is a self-unpacking bundle that its own updater replaces in place, so one failed
+      // start says nothing about the next one.
+      if (!isTransientStartup(error)) throw error;
+      await this.launchDriver();
+    }
+  }
+
+  private async launchDriver(): Promise<void> {
     const driver = startDriver({
       launch: this.options.launch,
       config: this.config,
@@ -232,11 +233,19 @@ export class Session {
     this.state = { type: "starting", driver };
     try {
       const init = await driver.ready;
+      // Losing the thread is worth a warning, not a dead session the user has to replace.
       if (this.conversationId !== null && init.conversation_id !== this.conversationId)
-        throw new AntigravityError(
-          "Antigravity restored a different conversation",
-          "INVALID_RESUME",
-        );
+        this.emit({
+          type: "session.notice",
+          sessionId: this.options.id,
+          notice: {
+            id: `${this.options.id}:resumed-${init.conversation_id}`,
+            severity: "warning",
+            title: "Antigravity started a new conversation",
+            description:
+              "Antigravity could not restore this chat's conversation, so it continues in a new one. Earlier turns are not visible to the agent.",
+          },
+        });
       this.conversationId = init.conversation_id;
       this.state = { type: "idle", driver };
       if (this.config.persist)
@@ -386,6 +395,14 @@ export class Session {
   private emit(event: ProviderEvent): void {
     this.options.emit(event);
   }
+}
+
+function isTransientStartup(error: unknown): boolean {
+  if (!(error instanceof AntigravityError)) return false;
+  if (error.code === "STARTUP_TIMEOUT") return true;
+  if (error.code !== "PROCESS_EXIT") return false;
+  // Signing in is the user's job; retrying it only doubles the wait.
+  return !/authentication failed/i.test(error.message);
 }
 
 // Native results contain every denial since this driver started, including repeated actions.

@@ -40,6 +40,15 @@ This integration uses your installed CLI and sign-in. It is not endorsed by Goog
 Paseo MCP tools and steering are unavailable. Your own `agy` MCP servers still work. Attached
 images are passed as file references for the agent to read.
 
+Paseo supplies the slash commands for this provider. `agy` runs with `--disable-slash-commands`,
+so a command travels to the agent as the instruction behind it, not as the `/name` you typed.
+
+`agy` is a self-unpacking bundle, and a host that is short on memory or busy with other `agy`
+sessions can take far longer than usual to answer. Discovery waits 30 seconds and a session start
+waits 60 on Windows (30 elsewhere), each retried once. Raise them with
+`PASEO_ANTIGRAVITY_PROBE_TIMEOUT_MS` and `PASEO_ANTIGRAVITY_STARTUP_TIMEOUT_MS` if the model
+picker still reports an error on a slow machine.
+
 If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config.json`. Use `env`
 for provider-specific environment variables:
 

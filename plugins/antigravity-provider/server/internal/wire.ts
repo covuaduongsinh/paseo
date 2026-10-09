@@ -59,8 +59,44 @@ export type Frame = z.infer<typeof frame>;
 export type Step = Extract<Frame, { event: "step_update" }>["step_update"];
 export type Init = Extract<Frame, { event: "init" }>;
 
-export function decodeFrame(line: string): Frame {
-  return frame.parse(JSON.parse(line));
+/** Lines Antigravity may interleave with its frames: banners, update notices, newer event types. */
+export type IgnoredLine = "non-json" | "unknown-event" | "malformed-step";
+
+export type Decoded =
+  | { type: "frame"; frame: Frame }
+  | { type: "ignored"; reason: IgnoredLine; detail: string }
+  | { type: "invalid"; detail: string };
+
+const KNOWN_EVENTS = new Set(["init", "step_update", "result"]);
+
+/**
+ * Only a broken `init` or `result` is a protocol failure. Everything else is skipped: the CLI
+ * prints banners and update notices on stdout, and new `agy` releases add event types.
+ */
+export function decodeFrame(line: string): Decoded {
+  let json: unknown;
+  try {
+    json = JSON.parse(line);
+  } catch (error) {
+    return { type: "ignored", reason: "non-json", detail: summarize(line, error) };
+  }
+  const event =
+    typeof json === "object" && json !== null && "event" in json
+      ? (json as { event: unknown }).event
+      : undefined;
+  if (typeof event !== "string" || !KNOWN_EVENTS.has(event))
+    return { type: "ignored", reason: "unknown-event", detail: summarize(line) };
+  const parsed = frame.safeParse(json);
+  if (parsed.success) return { type: "frame", frame: parsed.data };
+  if (event === "step_update")
+    return { type: "ignored", reason: "malformed-step", detail: summarize(line, parsed.error) };
+  return { type: "invalid", detail: summarize(line, parsed.error) };
+}
+
+function summarize(line: string, error?: unknown): string {
+  const message = error instanceof Error ? `${error.message}: ` : "";
+  const trimmed = line.length > 200 ? `${line.slice(0, 200)}…` : line;
+  return `${message}${trimmed}`;
 }
 
 export function encodePrompt(text: string): string {

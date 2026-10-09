@@ -12,6 +12,32 @@ import {
   type Init,
 } from "./wire.js";
 
+const PROBE_RETRY_DELAY_MS = 250;
+// Antigravity never emits frames this large; a longer line means the stream is corrupt.
+const MAX_LINE_LENGTH = 8 * 1024 * 1024;
+
+// A 190 MB PyInstaller bundle unpacks itself on every launch, so these deadlines are generous.
+// They are read per use so a host can tune them without restarting the plugin.
+function probeTimeout(): number {
+  return readTimeout("PASEO_ANTIGRAVITY_PROBE_TIMEOUT_MS", 30_000);
+}
+
+function startupTimeout(): number {
+  return readTimeout(
+    "PASEO_ANTIGRAVITY_STARTUP_TIMEOUT_MS",
+    process.platform === "win32" ? 60_000 : 30_000,
+  );
+}
+
+function readTimeout(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function report(message: string): void {
+  console.error(`[antigravity] ${message}`);
+}
+
 interface DriverOptions {
   launch: ProviderLaunch;
   config: ProviderSessionConfig;
@@ -59,6 +85,7 @@ export function startDriver(options: DriverOptions): Driver {
   const lines = createInterface({ input: child.stdout });
   let cleanup = Promise.resolve();
   let stderr = "";
+  let ignored = 0;
   let state: "starting" | "ready" | "stopping" | "exited" = "starting";
   let resolveReady: (init: Init) => void;
   let rejectReady: (error: Error) => void;
@@ -70,12 +97,16 @@ export function startDriver(options: DriverOptions): Driver {
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
+  const startupDeadlineMs = startupTimeout();
   const startupDeadline = setTimeout(
     () =>
       fail(
-        new AntigravityError("Antigravity did not initialize within 30 seconds", "STARTUP_TIMEOUT"),
+        new AntigravityError(
+          `Antigravity did not initialize within ${Math.round(startupDeadlineMs / 1000)} seconds`,
+          "STARTUP_TIMEOUT",
+        ),
       ),
-    30_000,
+    startupDeadlineMs,
   );
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString()).slice(-8192);
@@ -98,26 +129,38 @@ export function startDriver(options: DriverOptions): Driver {
   });
   lines.on("line", (line) => {
     if (!line.trim() || state === "exited" || state === "stopping") return;
-    let decoded: Frame;
-    try {
-      decoded = decodeFrame(line);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      fail(new AntigravityError(`Invalid Antigravity output: ${message}`, "INVALID_FRAME"));
+    if (line.length > MAX_LINE_LENGTH) {
+      skip(`dropped a ${line.length} byte line`);
+      return;
+    }
+    const decoded = decodeFrame(line);
+    if (decoded.type === "ignored") {
+      skip(`${decoded.reason}: ${decoded.detail}`);
+      return;
+    }
+    if (decoded.type === "invalid") {
+      fail(new AntigravityError(`Invalid Antigravity output: ${decoded.detail}`, "INVALID_FRAME"));
       return;
     }
     if (state === "starting") {
-      if (decoded.event === "init") {
+      if (decoded.frame.event === "init") {
         clearTimeout(startupDeadline);
         state = "ready";
-        resolveReady(decoded);
-      } else if (decoded.event === "result") {
-        fail(new AntigravityError(diagnostic(decoded.result.error), "STARTUP_ERROR"));
+        resolveReady(decoded.frame);
+      } else if (decoded.frame.event === "result") {
+        fail(new AntigravityError(diagnostic(decoded.frame.result.error), "STARTUP_ERROR"));
       }
       return;
     }
-    options.onFrame(decoded);
+    options.onFrame(decoded.frame);
   });
+
+  // A banner, an update notice or a newer event type must never end the session.
+  function skip(detail: string): void {
+    ignored += 1;
+    if (ignored <= 10) report(`skipped stdout line (${detail})`);
+    else if (ignored % 100 === 0) report(`skipped ${ignored} stdout lines`);
+  }
 
   function fail(failure: AntigravityError): void {
     clearTimeout(startupDeadline);
@@ -144,7 +187,8 @@ export function startDriver(options: DriverOptions): Driver {
       });
     },
     async stop(reason) {
-      if (process.platform === "win32") await cleanup;
+      // A cleanup failure is a diagnostic, never a reason to refuse a stop or a close.
+      if (process.platform === "win32") await cleanup.catch(() => undefined);
       if (state === "exited") return;
       if (state === "starting") rejectReady(new AntigravityError("Antigravity startup canceled"));
       clearTimeout(startupDeadline);
@@ -152,7 +196,7 @@ export function startDriver(options: DriverOptions): Driver {
       if (process.platform === "win32") {
         // Node signal emulation kills only the leader; taskkill must see the live tree.
         cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
-        await cleanup;
+        await cleanup.catch(() => undefined);
         await exited;
         return;
       }
@@ -182,7 +226,34 @@ interface ProbeOptions {
   args: string[];
   cwd?: string;
 }
-export function probe(options: ProbeOptions): Promise<string> {
+
+// Discovery runs while the user waits, and one slow start must not read as a failure.
+export async function probe(options: ProbeOptions): Promise<string> {
+  try {
+    return await runProbe(options);
+  } catch (error) {
+    if (!isRetryable(error)) throw error;
+    report(`retrying discovery after ${describeError(error)}`);
+    await delay(PROBE_RETRY_DELAY_MS);
+    return runProbe(options);
+  }
+}
+
+function isRetryable(error: unknown): boolean {
+  if (!(error instanceof AntigravityError)) return false;
+  // A timeout means the bundle was still unpacking; a spawn error means it was being replaced.
+  return error.code === "PROBE_TIMEOUT" || error.code === "SPAWN_ERROR";
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runProbe(options: ProbeOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(options.launch.command, [...options.launch.args, ...options.args], {
       env: options.launch.env,
@@ -192,13 +263,19 @@ export function probe(options: ProbeOptions): Promise<string> {
     });
     let stdout = "";
     let stderr = "";
+    // Killing the probe makes it exit non-zero, and that exit can land before the timeout
+    // rejection does. Without this flag a deadline reads as a CLI failure and is never retried.
+    let timedOut = false;
+    const expired = () =>
+      new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT");
     const deadline = setTimeout(() => {
+      timedOut = true;
       const termination = Promise.resolve(signalGroup(child, "SIGKILL"));
       void termination.then(() => {
-        reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
+        reject(expired());
         return undefined;
       }, reject);
-    }, 10_000);
+    }, probeTimeout());
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -211,7 +288,8 @@ export function probe(options: ProbeOptions): Promise<string> {
     });
     child.on("close", (code) => {
       clearTimeout(deadline);
-      if (code === 0) resolve(stdout);
+      if (timedOut) reject(expired());
+      else if (code === 0) resolve(stdout);
       else
         reject(
           new AntigravityError(

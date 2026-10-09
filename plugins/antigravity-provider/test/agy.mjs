@@ -1,4 +1,4 @@
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const args = process.argv.slice(2);
@@ -7,6 +7,26 @@ function record(value) {
   if (log) appendFileSync(log, `${JSON.stringify(value)}\n`);
 }
 record({ args, pid: process.pid, env: process.env.AGY_SESSION_VALUE });
+// Counts runs of one kind across processes so a probe can be slow once and fast afterwards.
+function attempt(kind) {
+  const file = `${log}.${kind}`;
+  const count = (existsSync(file) ? Number(readFileSync(file, "utf8")) : 0) + 1;
+  writeFileSync(file, String(count));
+  return count;
+}
+const TAB = String.fromCharCode(9);
+const EOL = String.fromCharCode(10);
+function models() {
+  const rows = fixture("models-api-key").map((line) => line.split(TAB));
+  const format = process.env.AGY_TEST_MODELS_FORMAT;
+  if (format === "wide")
+    return rows.map(([id, label]) => [id, label, "available"].join(TAB)).join(EOL);
+  if (format === "spaces")
+    return ["MODEL    NAME", "-------  ----"]
+      .concat(rows.map(([id, label]) => `${id}    ${label}`))
+      .join(EOL);
+  return rows.map((row) => row.join(TAB)).join(EOL);
+}
 function fixture(name, stream = "stdout") {
   return readFileSync(new URL(`./fixtures/${name}.${stream}.ndjson`, import.meta.url), "utf8")
     .trim()
@@ -23,8 +43,13 @@ if (args.includes("models")) {
     process.stderr.write(fixture("models-unauthenticated", "stderr").join("\n"));
     process.exit(1);
   }
-  process.stdout.write(fixture("models-api-key").join("\n") + "\n");
-  process.exit(0);
+  if (process.env.AGY_TEST_SLOW_PROBE_MS && attempt("probe") === 1) {
+    // The first discovery outlives its deadline; the retry answers immediately.
+    setTimeout(() => process.exit(0), Number(process.env.AGY_TEST_SLOW_PROBE_MS));
+  } else {
+    process.stdout.write(models() + EOL);
+    process.exit(0);
+  }
 }
 if (process.env.AGY_TEST_STARTUP === "auth") {
   process.stderr.write(fixture("not-signed-in", "stderr").join("\n"));
@@ -55,6 +80,14 @@ function emit(frame) {
   }
   process.stdout.write(JSON.stringify(converted) + "\n");
 }
+// Real runs interleave banners, update notices and newer event types with the frames.
+function noise() {
+  if (process.env.AGY_TEST_NOISE !== "yes") return;
+  process.stdout.write("Antigravity 1.2.16 is available. Run `agy upgrade` to install it." + EOL);
+  process.stdout.write(JSON.stringify({ event: "heartbeat", at: "now" }) + EOL);
+  process.stdout.write(JSON.stringify({ event: "step_update", step_update: {} }) + EOL);
+}
+noise();
 const init = fixture("text-turn")[0];
 if (args.includes("--model")) init.init.model = args[args.indexOf("--model") + 1];
 emit(init);
@@ -74,6 +107,7 @@ lines.on("line", (line) => {
   if (text.includes("RESUME")) name = "resume";
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  noise();
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

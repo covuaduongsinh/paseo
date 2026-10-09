@@ -3,6 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderPrompt } from "@getpaseo/plugin/server/provider";
+import { commandLabel, renderCommand } from "./commands.js";
 import { AntigravityError } from "./wire.js";
 
 interface EncodedPrompt {
@@ -14,12 +15,12 @@ export class PromptFiles {
   private directory: string | null = null;
 
   async encode(prompt: ProviderPrompt): Promise<EncodedPrompt> {
-    if (
-      prompt.input.type !== "message" ||
-      prompt.delivery === "steer" ||
-      prompt.outputSchema !== undefined
-    )
-      throw new AntigravityError("Antigravity supports messages only");
+    if (prompt.delivery === "steer" || prompt.outputSchema !== undefined)
+      throw new AntigravityError("Antigravity supports messages and commands only");
+    if (prompt.input.type === "command") {
+      const { name, arguments: args } = prompt.input;
+      return { text: commandLabel(name, args), nativeText: renderCommand(name, args) };
+    }
     const parts = prompt.input.content.map((part) => {
       if (part.type === "text") return part;
       if (part.type === "image") return { ...part, extension: imageExtension(part.mimeType) };
