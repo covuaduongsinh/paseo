@@ -96,3 +96,6 @@ app.json
 
 # oh-my-claudecode state
 .omc/
+
+# Project-local Serena configuration and memories.
+.serena/
