@@ -1,0 +1,23 @@
+{
+  "name": "@getpaseo/plugin-team-mode",
+  "version": "0.1.0",
+  "description": "Multi-agent coordinated teamwork plugin for Paseo",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "paseo-plugin.json",
+    "index.client.tsx",
+    "index.server.ts",
+    "client/",
+    "server/",
+    "shared/",
+    "skills/",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@getpaseo/plugin": ">=0.8.0",
+    "react": ">=19",
+    "react-native": ">=0.81",
+    "zod": ">=3.23"
+  }
+}

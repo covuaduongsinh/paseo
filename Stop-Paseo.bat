@@ -9,6 +9,9 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":6767" ^| findstr "LISTENING
     taskkill /F /PID %%a >nul 2>&1
 )
 
+:: Xoa file pid lock cu neu con ton tai
+if exist "%USERPROFILE%\.paseo\paseo.pid" del /f /q "%USERPROFILE%\.paseo\paseo.pid" >nul 2>&1
+
 echo Da tat thanh cong Paseo Daemon va giai phong tai nguyen!
 echo ========================================================
 timeout /t 2 >nul

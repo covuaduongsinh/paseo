@@ -1,0 +1,9 @@
+{
+  "id": "paseo-team-mode",
+  "name": "Paseo Team Mode",
+  "description": "Multi-agent coordinated teamwork: Leader task decomposition, parallel Teammates, Shared Kanban Task Board, and async Mailbox.",
+  "version": "0.1.0",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}
