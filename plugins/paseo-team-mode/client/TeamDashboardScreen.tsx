@@ -23,7 +23,7 @@ import { TeamCreateModal } from "./components/TeamCreateModal.js";
 
 type ViewMode = "parallel" | "single" | "kanban";
 
-export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceProps) {
+export function TeamDashboardScreen({ theme, layout }: PluginSurfaceProps) {
   const [teams, setTeams] = useState<TeamConfig[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TeamTask[]>([]);
@@ -42,7 +42,8 @@ export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceP
   const listProviders = useRpc(listProvidersRpc);
   const updateSlotProvider = useRpc(updateSlotProviderRpc);
 
-  const currentProjectId = projectId ?? "default";
+  // The host does not pass a project to plugin surfaces, so all teams share one bucket.
+  const currentProjectId = "default";
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -112,7 +113,8 @@ export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceP
   }, [selectedTeamId, fetchTasks, fetchMessages]);
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);
-  const activeSlot = selectedTeam?.slots.find((s) => s.slotId === activeSlotId) ?? selectedTeam?.slots[0];
+  const activeSlot =
+    selectedTeam?.slots.find((s) => s.slotId === activeSlotId) ?? selectedTeam?.slots[0];
 
   const handleCreateTeam = async (params: any) => {
     try {
@@ -188,9 +190,7 @@ export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceP
         ]}
       >
         <View style={styles.teamSelectorArea}>
-          <Text style={[styles.screenTitle, { color: theme.colors.foreground }]}>
-            👥 Teams
-          </Text>
+          <Text style={[styles.screenTitle, { color: theme.colors.foreground }]}>👥 Teams</Text>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.teamsList}>
             {teams.map((t) => {
@@ -247,8 +247,7 @@ export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceP
                 style={[
                   styles.toggleBtnText,
                   {
-                    color:
-                      viewMode === "parallel" ? "#6366f1" : theme.colors.foregroundMuted,
+                    color: viewMode === "parallel" ? "#6366f1" : theme.colors.foregroundMuted,
                   },
                 ]}
               >
@@ -268,8 +267,7 @@ export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceP
                 style={[
                   styles.toggleBtnText,
                   {
-                    color:
-                      viewMode === "single" ? "#6366f1" : theme.colors.foregroundMuted,
+                    color: viewMode === "single" ? "#6366f1" : theme.colors.foregroundMuted,
                   },
                 ]}
               >
@@ -289,8 +287,7 @@ export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceP
                 style={[
                   styles.toggleBtnText,
                   {
-                    color:
-                      viewMode === "kanban" ? "#6366f1" : theme.colors.foregroundMuted,
+                    color: viewMode === "kanban" ? "#6366f1" : theme.colors.foregroundMuted,
                   },
                 ]}
               >
@@ -347,7 +344,8 @@ export function TeamDashboardScreen({ theme, layout, projectId }: PluginSurfaceP
               No Team Configured
             </Text>
             <Text style={[styles.emptySubtitle, { color: theme.colors.foregroundMuted }]}>
-              Create a multi-agent team to enable Leader orchestration, parallel teammates, and task boards.
+              Create a multi-agent team to enable Leader orchestration, parallel teammates, and task
+              boards.
             </Text>
             <Pressable
               onPress={() => setShowCreateModal(true)}

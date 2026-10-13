@@ -170,7 +170,7 @@ function createConnection(
     async close() {
       if (closed) return;
       closed = true;
-      await Promise.all([...queues.values()]);
+      await Promise.all(queues.values());
       queues.clear();
       await Promise.all([...sessions.values()].map((opened) => opened.close()));
       sessions.clear();

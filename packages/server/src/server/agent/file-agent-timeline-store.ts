@@ -60,7 +60,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
         const rows = this.memory.getRows(agentId);
         const filePath = this.getFilePath(agentId);
         await fs.mkdir(this.dir, { recursive: true }).catch(() => undefined);
-        await writeJsonFileAtomic(filePath, rows);
+        return writeJsonFileAtomic(filePath, rows);
       })
       .catch((err) => {
         this.logger.error({ err, agentId }, "Failed to save timeline file to disk");
@@ -100,6 +100,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
 
   async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
     await this.ensureLoaded(agentId);
+    // oxlint-disable-next-line oxc/no-map-spread
     return this.memory.getRows(agentId).map((r) => ({
       seq: r.seqEnd,
       timestamp: r.timestamp,

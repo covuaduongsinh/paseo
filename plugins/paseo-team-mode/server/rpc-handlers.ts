@@ -16,39 +16,115 @@ import {
   updateSlotProviderRpc,
 } from "../shared/contracts.js";
 
-const DEFAULT_PROVIDER_MODELS: Record<string, Array<{ id: string; label: string; description?: string; isDefault?: boolean }>> = {
+const DEFAULT_PROVIDER_MODELS: Record<
+  string,
+  Array<{ id: string; label: string; description?: string; isDefault?: boolean }>
+> = {
   gemini: [
-    { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (1M Context)", description: "Google flagship reasoning & large codebase analysis", isDefault: true },
-    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", description: "Fast, low-latency reasoning & high throughput" },
-    { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", description: "Next-gen multimodal speed & live tools" },
-    { id: "gemini-2.0-flash-thinking", label: "Gemini 2.0 Flash Thinking", description: "Experimental reasoning trace engine" },
-    { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", description: "Long-horizon document & video context" },
-    { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash", description: "Ultra-fast lightweight model" },
+    {
+      id: "gemini-2.5-pro",
+      label: "Gemini 2.5 Pro (1M Context)",
+      description: "Google flagship reasoning & large codebase analysis",
+      isDefault: true,
+    },
+    {
+      id: "gemini-2.5-flash",
+      label: "Gemini 2.5 Flash",
+      description: "Fast, low-latency reasoning & high throughput",
+    },
+    {
+      id: "gemini-2.0-flash",
+      label: "Gemini 2.0 Flash",
+      description: "Next-gen multimodal speed & live tools",
+    },
+    {
+      id: "gemini-2.0-flash-thinking",
+      label: "Gemini 2.0 Flash Thinking",
+      description: "Experimental reasoning trace engine",
+    },
+    {
+      id: "gemini-1.5-pro",
+      label: "Gemini 1.5 Pro",
+      description: "Long-horizon document & video context",
+    },
+    {
+      id: "gemini-1.5-flash",
+      label: "Gemini 1.5 Flash",
+      description: "Ultra-fast lightweight model",
+    },
   ],
   claude: [
-    { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet (Hybrid Reasoning)", description: "Anthropic flagship model for architecture & coding", isDefault: true },
-    { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet", description: "Fast & intelligent coding model" },
-    { id: "claude-3-5-haiku", label: "Claude 3.5 Haiku", description: "Ultra-fast response for lightweight subtasks" },
+    {
+      id: "claude-3-7-sonnet",
+      label: "Claude 3.7 Sonnet (Hybrid Reasoning)",
+      description: "Anthropic flagship model for architecture & coding",
+      isDefault: true,
+    },
+    {
+      id: "claude-3-5-sonnet",
+      label: "Claude 3.5 Sonnet",
+      description: "Fast & intelligent coding model",
+    },
+    {
+      id: "claude-3-5-haiku",
+      label: "Claude 3.5 Haiku",
+      description: "Ultra-fast response for lightweight subtasks",
+    },
     { id: "claude-3-opus", label: "Claude 3 Opus", description: "Deep comprehension & writing" },
   ],
   codex: [
-    { id: "gpt-4o", label: "GPT-4o (Omni)", description: "Flagship OpenAI model for code generation", isDefault: true },
-    { id: "gpt-4.5-preview", label: "GPT-4.5 Preview", description: "Advanced reasoning & synthesis" },
-    { id: "o3-mini", label: "o3-mini (High Reasoning)", description: "Cost-effective deep reasoning for STEM & logic" },
+    {
+      id: "gpt-4o",
+      label: "GPT-4o (Omni)",
+      description: "Flagship OpenAI model for code generation",
+      isDefault: true,
+    },
+    {
+      id: "gpt-4.5-preview",
+      label: "GPT-4.5 Preview",
+      description: "Advanced reasoning & synthesis",
+    },
+    {
+      id: "o3-mini",
+      label: "o3-mini (High Reasoning)",
+      description: "Cost-effective deep reasoning for STEM & logic",
+    },
     { id: "o1", label: "o1 (Reasoning)", description: "Comprehensive reasoning model" },
     { id: "o1-mini", label: "o1-mini", description: "Fast specialized coding reasoning" },
     { id: "gpt-4o-mini", label: "GPT-4o Mini", description: "Lightweight fast assistant" },
   ],
   opencode: [
-    { id: "deepseek-r1", label: "DeepSeek R1 (Reasoning)", description: "Open weights frontier reasoning", isDefault: true },
+    {
+      id: "deepseek-r1",
+      label: "DeepSeek R1 (Reasoning)",
+      description: "Open weights frontier reasoning",
+      isDefault: true,
+    },
     { id: "deepseek-v3", label: "DeepSeek V3", description: "High throughput general coding" },
-    { id: "qwen-2.5-coder-32b", label: "Qwen 2.5 Coder 32B", description: "Specialized code generation" },
-    { id: "llama-3.3-70b", label: "Llama 3.3 70B Instruct", description: "General multipurpose open model" },
+    {
+      id: "qwen-2.5-coder-32b",
+      label: "Qwen 2.5 Coder 32B",
+      description: "Specialized code generation",
+    },
+    {
+      id: "llama-3.3-70b",
+      label: "Llama 3.3 70B Instruct",
+      description: "General multipurpose open model",
+    },
     { id: "codellama-70b", label: "CodeLlama 70B", description: "Specialized code model" },
-    { id: "mistral-large", label: "Mistral Large", description: "High capability multilingual model" },
+    {
+      id: "mistral-large",
+      label: "Mistral Large",
+      description: "High capability multilingual model",
+    },
   ],
   omp: [
-    { id: "default", label: "Oh My Pi Default", description: "Autonomous workflow runner", isDefault: true },
+    {
+      id: "default",
+      label: "Oh My Pi Default",
+      description: "Autonomous workflow runner",
+      isDefault: true,
+    },
     { id: "autopilot", label: "OmA Autopilot", description: "Full-auto staged loop" },
     { id: "ralph", label: "OmA Ralph Mode", description: "Strict quality-gated verification" },
     { id: "ultrawork", label: "OmA Ultrawork", description: "High-throughput batch delivery" },
@@ -119,8 +195,8 @@ export function registerTeamRpcs(server: PluginServerContext, store: TeamStore) 
       let snapshotProviders: any[] = [];
       if (context?.paseo?.providers?.snapshot) {
         const snap = await context.paseo.providers.snapshot();
-        if (snap?.providers) {
-          snapshotProviders = snap.providers;
+        if (snap?.entries) {
+          snapshotProviders = snap.entries;
         }
       }
 
@@ -129,14 +205,18 @@ export function registerTeamRpcs(server: PluginServerContext, store: TeamStore) 
           const id = p.id ?? p.provider ?? "unknown";
           const resolvedId = resolveProviderId(id);
           const rawModels = p.models ?? [];
-          const models = rawModels.length > 0
-            ? rawModels.map((m: any) => ({
-                id: typeof m === "string" ? m : m.id,
-                label: typeof m === "string" ? m : (m.label ?? m.id),
-                description: typeof m === "object" ? m.description : undefined,
-                isDefault: typeof m === "object" ? m.isDefault : undefined,
-              }))
-            : (DEFAULT_PROVIDER_MODELS[resolvedId] ?? DEFAULT_PROVIDER_MODELS[id] ?? [{ id: "default", label: "Default Model", isDefault: true }]);
+          const models =
+            rawModels.length > 0
+              ? rawModels.map((m: any) => ({
+                  id: typeof m === "string" ? m : m.id,
+                  label: typeof m === "string" ? m : (m.label ?? m.id),
+                  description: typeof m === "object" ? m.description : undefined,
+                  isDefault: typeof m === "object" ? m.isDefault : undefined,
+                }))
+              : (DEFAULT_PROVIDER_MODELS[resolvedId] ??
+                DEFAULT_PROVIDER_MODELS[id] ?? [
+                  { id: "default", label: "Default Model", isDefault: true },
+                ]);
 
           return {
             id,
@@ -165,12 +245,37 @@ export function registerTeamRpcs(server: PluginServerContext, store: TeamStore) 
     // Default rich providers list
     return {
       providers: [
-        { id: "gemini", name: "Google Gemini", status: "available", models: DEFAULT_PROVIDER_MODELS.gemini! },
-        { id: "claude", name: "Claude Code", status: "available", models: DEFAULT_PROVIDER_MODELS.claude! },
-        { id: "codex", name: "OpenAI Codex", status: "available", models: DEFAULT_PROVIDER_MODELS.codex! },
-        { id: "opencode", name: "OpenCode", status: "available", models: DEFAULT_PROVIDER_MODELS.opencode! },
+        {
+          id: "gemini",
+          name: "Google Gemini",
+          status: "available",
+          models: DEFAULT_PROVIDER_MODELS.gemini!,
+        },
+        {
+          id: "claude",
+          name: "Claude Code",
+          status: "available",
+          models: DEFAULT_PROVIDER_MODELS.claude!,
+        },
+        {
+          id: "codex",
+          name: "OpenAI Codex",
+          status: "available",
+          models: DEFAULT_PROVIDER_MODELS.codex!,
+        },
+        {
+          id: "opencode",
+          name: "OpenCode",
+          status: "available",
+          models: DEFAULT_PROVIDER_MODELS.opencode!,
+        },
         { id: "omp", name: "Oh My Pi", status: "available", models: DEFAULT_PROVIDER_MODELS.omp! },
-        { id: "grok", name: "xAI Grok", status: "available", models: DEFAULT_PROVIDER_MODELS.grok! },
+        {
+          id: "grok",
+          name: "xAI Grok",
+          status: "available",
+          models: DEFAULT_PROVIDER_MODELS.grok!,
+        },
       ],
     };
   });
@@ -196,9 +301,7 @@ export function registerTeamRpcs(server: PluginServerContext, store: TeamStore) 
 
     // 3. Resolve provider & model
     const resolvedProvider = resolveProviderId(slot.provider);
-    const providerConfig = slot.model
-      ? `${resolvedProvider}/${slot.model}`
-      : resolvedProvider;
+    const providerConfig = slot.model ? `${resolvedProvider}/${slot.model}` : resolvedProvider;
 
     // 4. Dispatch to Paseo agent in background
     (async () => {
@@ -238,7 +341,8 @@ Execute the assigned tasks diligently, write clean code and tests, and report yo
           const lastMsg = result?.lastMessage || result?.final?.activeTurn?.output;
 
           if (lastMsg) {
-            const content = typeof lastMsg === "string" ? lastMsg : (lastMsg.text || JSON.stringify(lastMsg));
+            const content =
+              typeof lastMsg === "string" ? lastMsg : lastMsg.text || JSON.stringify(lastMsg);
             await store.addMessage({
               teamId,
               slotId,
@@ -248,7 +352,10 @@ Execute the assigned tasks diligently, write clean code and tests, and report yo
           } else {
             // Refetch timeline if direct message not present
             const timeline = await agentRef.timeline?.refetch?.({ limit: 10 });
-            const assistantTurns = timeline?.items?.filter((it: any) => it.type === "assistant" || it.role === "assistant") ?? [];
+            const assistantTurns =
+              timeline?.items?.filter(
+                (it: any) => it.type === "assistant" || it.role === "assistant",
+              ) ?? [];
             if (assistantTurns.length > 0) {
               const latest = assistantTurns[assistantTurns.length - 1];
               const text = latest.text || latest.content || "Completed turn.";
