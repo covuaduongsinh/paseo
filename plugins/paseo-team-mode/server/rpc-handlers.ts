@@ -1,6 +1,7 @@
-import type { PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { TeamStore } from "./team-store.js";
 import {
+  type ProviderOption,
   listTeamsRpc,
   getTeamRpc,
   createTeamRpc,
@@ -144,6 +145,43 @@ function resolveProviderId(provider: string): string {
   return provider;
 }
 
+type AgentHandle = ReturnType<PluginHandlerContext["paseo"]["agents"]["ref"]>;
+
+function getField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  return Reflect.get(value, key);
+}
+
+function getString(value: unknown, key: string): string | undefined {
+  const field = getField(value, key);
+  return typeof field === "string" && field.length > 0 ? field : undefined;
+}
+
+function textOf(value: unknown): string | undefined {
+  if (typeof value === "string") return value.length > 0 ? value : undefined;
+  if (value === undefined || value === null) return undefined;
+  return getString(value, "text") ?? JSON.stringify(value);
+}
+
+function replyFromResult(result: unknown): string | undefined {
+  return (
+    textOf(getField(result, "lastMessage")) ??
+    textOf(getField(getField(getField(result, "final"), "activeTurn"), "output"))
+  );
+}
+
+function latestAssistantText(timeline: unknown): string | undefined {
+  const items = getField(timeline, "items");
+  if (!Array.isArray(items)) return undefined;
+  const turns: unknown[] = items.filter(
+    (item: unknown) =>
+      getField(item, "type") === "assistant" || getField(item, "role") === "assistant",
+  );
+  if (turns.length === 0) return undefined;
+  const latest = turns[turns.length - 1];
+  return getString(latest, "text") ?? getString(latest, "content") ?? "Completed turn.";
+}
+
 export function registerTeamRpcs(server: PluginServerContext, store: TeamStore) {
   server.handle(listTeamsRpc, async ({ projectId }) => {
     const teams = await store.listTeams(projectId);
@@ -192,38 +230,27 @@ export function registerTeamRpcs(server: PluginServerContext, store: TeamStore) 
 
   server.handle(listProvidersRpc, async (_, context) => {
     try {
-      let snapshotProviders: any[] = [];
-      if (context?.paseo?.providers?.snapshot) {
-        const snap = await context.paseo.providers.snapshot();
-        if (snap?.entries) {
-          snapshotProviders = snap.entries;
-        }
-      }
+      const snap = await context.paseo.providers.snapshot();
 
-      if (snapshotProviders.length > 0) {
-        const providers = snapshotProviders.map((p: any) => {
-          const id = p.id ?? p.provider ?? "unknown";
+      if (snap.entries.length > 0) {
+        const providers: ProviderOption[] = snap.entries.map((entry) => {
+          const id = entry.provider;
           const resolvedId = resolveProviderId(id);
-          const rawModels = p.models ?? [];
+          const snapshotModels = entry.models ?? [];
           const models =
-            rawModels.length > 0
-              ? rawModels.map((m: any) => ({
-                  id: typeof m === "string" ? m : m.id,
-                  label: typeof m === "string" ? m : (m.label ?? m.id),
-                  description: typeof m === "object" ? m.description : undefined,
-                  isDefault: typeof m === "object" ? m.isDefault : undefined,
+            snapshotModels.length > 0
+              ? snapshotModels.map((m) => ({
+                  id: m.id,
+                  label: m.label,
+                  description: m.description,
+                  isDefault: m.isDefault,
                 }))
               : (DEFAULT_PROVIDER_MODELS[resolvedId] ??
                 DEFAULT_PROVIDER_MODELS[id] ?? [
                   { id: "default", label: "Default Model", isDefault: true },
                 ]);
 
-          return {
-            id,
-            name: p.label ?? p.name ?? id,
-            status: p.status ?? (p.enabled ? "available" : "disabled"),
-            models,
-          };
+          return { id, name: entry.label ?? id, status: entry.status, models };
         });
 
         // Ensure gemini and claude are included if missing
@@ -306,7 +333,7 @@ export function registerTeamRpcs(server: PluginServerContext, store: TeamStore) 
     // 4. Dispatch to Paseo agent in background
     (async () => {
       try {
-        let agentRef: any = null;
+        let agentRef: AgentHandle;
 
         if (!slot.agentId) {
           // Create new Paseo agent for this slot
@@ -336,54 +363,23 @@ Execute the assigned tasks diligently, write clean code and tests, and report yo
         }
 
         // Wait for turn completion
-        if (agentRef?.waitForFinish) {
-          const result = await agentRef.waitForFinish(180000); // 3 min timeout
-          const lastMsg = result?.lastMessage || result?.final?.activeTurn?.output;
-
-          if (lastMsg) {
-            const content =
-              typeof lastMsg === "string" ? lastMsg : lastMsg.text || JSON.stringify(lastMsg);
-            await store.addMessage({
-              teamId,
-              slotId,
-              sender: "agent",
-              content,
-            });
-          } else {
-            // Refetch timeline if direct message not present
-            const timeline = await agentRef.timeline?.refetch?.({ limit: 10 });
-            const assistantTurns =
-              timeline?.items?.filter(
-                (it: any) => it.type === "assistant" || it.role === "assistant",
-              ) ?? [];
-            if (assistantTurns.length > 0) {
-              const latest = assistantTurns[assistantTurns.length - 1];
-              const text = latest.text || latest.content || "Completed turn.";
-              await store.addMessage({
-                teamId,
-                slotId,
-                sender: "agent",
-                content: text,
-              });
-            } else {
-              await store.addMessage({
-                teamId,
-                slotId,
-                sender: "agent",
-                content: `Task processed successfully by ${slot.name}.`,
-              });
-            }
-          }
+        const result = await agentRef.waitForFinish(180000); // 3 min timeout
+        let content = replyFromResult(result);
+        if (content === undefined) {
+          // Refetch timeline if direct message not present
+          const timeline = await agentRef.timeline.refetch({ limit: 10 });
+          content = latestAssistantText(timeline) ?? `Task processed successfully by ${slot.name}.`;
         }
+        await store.addMessage({ teamId, slotId, sender: "agent", content });
 
         await store.updateSlotStatus(teamId, slotId, "idle");
-      } catch (err: any) {
+      } catch (err) {
         console.error("Agent execution error:", err);
         await store.addMessage({
           teamId,
           slotId,
           sender: "system",
-          content: `Notice: ${err.message}`,
+          content: `Notice: ${err instanceof Error ? err.message : String(err)}`,
         });
         await store.updateSlotStatus(teamId, slotId, "error");
       }

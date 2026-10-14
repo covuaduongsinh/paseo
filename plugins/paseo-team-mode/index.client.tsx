@@ -5,13 +5,7 @@ import { TeamDashboardScreen } from "./client/TeamDashboardScreen.js";
 
 function TeamSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
   const open = useCallback(() => openScreen({ screenId: "teams" }), [openScreen]);
-  return (
-    <SidebarRow
-      icon="Users"
-      active={currentScreen?.screenId === "teams"}
-      onPress={open}
-    />
-  );
+  return <SidebarRow icon="Users" active={currentScreen?.screenId === "teams"} onPress={open} />;
 }
 
 export default function contribute(plugin: PluginClientContext) {

@@ -21,6 +21,7 @@ Inspired by AIonUI's Team Mode, this plugin brings full multi-agent teamwork cap
 ## 🚀 Installation & Usage
 
 ### 1. Enable / Link Plugin in Paseo
+
 Run from the root of your Paseo installation:
 
 ```bash
@@ -28,6 +29,7 @@ paseo plugin add ./plugins/paseo-team-mode
 ```
 
 ### 2. Access Team Mode
+
 - Open Paseo Desktop or Web UI.
 - Click on the **👥 Teams** icon in the sidebar navigation.
 - Click **+ New Team** to create a team:

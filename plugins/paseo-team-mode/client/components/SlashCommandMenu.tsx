@@ -1,5 +1,12 @@
 import React from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  type PressableStateCallbackType,
+} from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 
 export interface SlashCommand {
@@ -113,7 +120,7 @@ export function SlashCommandMenu({ query, theme, onSelect, onClose }: SlashComma
         {filteredCommands.map((cmd) => (
           <Pressable
             key={cmd.command}
-            style={({ hovered }: any) => [
+            style={({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
               styles.item,
               hovered && { backgroundColor: theme.colors.surface2 },
             ]}
@@ -124,7 +131,10 @@ export function SlashCommandMenu({ query, theme, onSelect, onClose }: SlashComma
             </View>
             <View style={styles.infoWrapper}>
               <Text style={[styles.cmdName, { color: theme.colors.foreground }]}>{cmd.label}</Text>
-              <Text style={[styles.cmdDesc, { color: theme.colors.foregroundMuted }]} numberOfLines={1}>
+              <Text
+                style={[styles.cmdDesc, { color: theme.colors.foregroundMuted }]}
+                numberOfLines={1}
+              >
                 {cmd.description}
               </Text>
             </View>

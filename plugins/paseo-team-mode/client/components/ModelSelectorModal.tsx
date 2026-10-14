@@ -2,6 +2,14 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView, TextInput } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { ProviderOption, TeamSlot } from "../../shared/contracts.js";
+import { FIXED_POSITION } from "../theme/overlay.js";
+
+const PROVIDER_ICONS: Record<string, string> = {
+  claude: "🧠",
+  antigravity: "⚡",
+  codex: "🤖",
+  opencode: "🌐",
+};
 
 interface ModelSelectorModalProps {
   visible: boolean;
@@ -12,31 +20,36 @@ interface ModelSelectorModalProps {
   onSelect: (providerId: string, modelId: string) => void;
 }
 
-export function ModelSelectorModal({
-  visible,
+export function ModelSelectorModal(props: ModelSelectorModalProps) {
+  const { visible, slot } = props;
+  if (!visible || !slot) return null;
+  return <ModelSelectorModalContent {...props} slot={slot} />;
+}
+
+interface ModelSelectorModalContentProps extends ModelSelectorModalProps {
+  slot: TeamSlot;
+}
+
+// Hooks live here so they run on every render; the early return above would change their count.
+function ModelSelectorModalContent({
   slot,
   providers,
   theme,
   onClose,
   onSelect,
-}: ModelSelectorModalProps) {
-  if (!visible || !slot) return null;
-
+}: ModelSelectorModalContentProps) {
   const currentProviderId = slot.provider || (providers[0]?.id ?? "claude");
   const [selectedProviderId, setSelectedProviderId] = useState(currentProviderId);
-  const selectedProvider =
-    providers.find((p) => p.id === selectedProviderId) ?? providers[0];
+  const selectedProvider = providers.find((p) => p.id === selectedProviderId) ?? providers[0];
 
-  const currentModelId =
-    slot.model || selectedProvider?.models?.[0]?.id || "default";
+  const currentModelId = slot.model || selectedProvider?.models?.[0]?.id || "default";
   const [selectedModelId, setSelectedModelId] = useState(currentModelId);
   const [customModelId, setCustomModelId] = useState("");
   const [useCustomModel, setUseCustomModel] = useState(false);
 
   const handleApply = () => {
-    const finalModel = useCustomModel && customModelId.trim()
-      ? customModelId.trim()
-      : selectedModelId;
+    const finalModel =
+      useCustomModel && customModelId.trim() ? customModelId.trim() : selectedModelId;
     onSelect(selectedProviderId, finalModel);
     onClose();
   };
@@ -99,9 +112,7 @@ export function ModelSelectorModal({
                     setUseCustomModel(false);
                   }}
                 >
-                  <Text style={styles.providerIcon}>
-                    {p.id === "claude" ? "🧠" : p.id === "antigravity" ? "⚡" : p.id === "codex" ? "🤖" : p.id === "opencode" ? "🌐" : "🔧"}
-                  </Text>
+                  <Text style={styles.providerIcon}>{PROVIDER_ICONS[p.id] ?? "🔧"}</Text>
                   <Text
                     style={[
                       styles.providerName,
@@ -155,11 +166,7 @@ export function ModelSelectorModal({
                       >
                         {m.label}
                       </Text>
-                      {m.isDefault && (
-                        <View style={styles.defaultBadge}>
-                          <Text style={styles.defaultText}>RECOMMENDED</Text>
-                        </View>
-                      )}
+                      {m.isDefault && <RecommendedBadge />}
                     </View>
                     {m.description && (
                       <Text style={[styles.modelDesc, { color: theme.colors.foregroundMuted }]}>
@@ -239,9 +246,17 @@ export function ModelSelectorModal({
   );
 }
 
+function RecommendedBadge() {
+  return (
+    <View style={styles.defaultBadge}>
+      <Text style={styles.defaultText}>RECOMMENDED</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   backdrop: {
-    position: "fixed" as any,
+    position: FIXED_POSITION,
     top: 0,
     left: 0,
     right: 0,

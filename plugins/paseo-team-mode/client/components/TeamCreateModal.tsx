@@ -1,60 +1,104 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  StyleSheet,
+  ScrollView,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { listProvidersRpc, type TeamRole, type ProviderOption } from "../../shared/contracts.js";
 import { MEMBER_COLOR_PALETTE } from "../theme/member-colors.js";
+import { FIXED_POSITION } from "../theme/overlay.js";
+
+export interface NewTeamInput {
+  name: string;
+  description?: string;
+  workspaceIsolation: "shared" | "worktree";
+  slots: Array<{
+    name: string;
+    role: TeamRole;
+    provider: string;
+    model?: string;
+    instruction?: string;
+    colorIndex: number;
+  }>;
+}
 
 interface TeamCreateModalProps {
   visible: boolean;
   theme: PluginSurfaceProps["theme"];
   onClose: () => void;
-  onCreate: (team: {
-    name: string;
-    description?: string;
-    workspaceIsolation: "shared" | "worktree";
-    slots: Array<{
-      name: string;
-      role: TeamRole;
-      provider: string;
-      model?: string;
-      instruction?: string;
-      colorIndex: number;
-    }>;
-  }) => void;
+  onCreate: (team: NewTeamInput) => void;
 }
 
-export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreateModalProps) {
-  if (!visible) return null;
+interface Teammate {
+  key: string;
+  name: string;
+  provider: string;
+  model?: string;
+  colorIndex: number;
+}
 
+type TeammatePatch = Partial<Omit<Teammate, "key">>;
+
+const DEFAULT_LEADER_PROVIDER = "claude";
+
+function newTeammate(fields: Omit<Teammate, "key">): Teammate {
+  return { key: `tm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, ...fields };
+}
+
+export function TeamCreateModal(props: TeamCreateModalProps) {
+  if (!props.visible) return null;
+  return <TeamCreateModalContent {...props} />;
+}
+
+// Hooks live here so they run on every render; the early return above would change their count.
+function TeamCreateModalContent({ theme, onClose, onCreate }: TeamCreateModalProps) {
   const [teamName, setTeamName] = useState("");
   const [isolation, setIsolation] = useState<"shared" | "worktree">("shared");
-  const [leaderProvider, setLeaderProvider] = useState("claude");
+  const [leaderProvider, setLeaderProvider] = useState(DEFAULT_LEADER_PROVIDER);
   const [leaderModel, setLeaderModel] = useState("claude-3-7-sonnet");
   const [availableProviders, setAvailableProviders] = useState<ProviderOption[]>([]);
 
   const listProviders = useRpc(listProvidersRpc);
 
   useEffect(() => {
-    listProviders({})
-      .then((res) => {
-        if (res.providers.length > 0) {
-          setAvailableProviders(res.providers);
-          if (!res.providers.some((p) => p.id === leaderProvider)) {
-            setLeaderProvider(res.providers[0]!.id);
-            const firstModel = res.providers[0]!.models?.[0]?.id ?? "default";
-            setLeaderModel(firstModel);
-          }
+    let cancelled = false;
+    async function loadProviders() {
+      try {
+        const res = await listProviders({});
+        const [first] = res.providers;
+        if (cancelled || !first) return;
+        setAvailableProviders(res.providers);
+        // The leader starts on the default provider; move it only when the host lacks that one.
+        if (!res.providers.some((p) => p.id === DEFAULT_LEADER_PROVIDER)) {
+          setLeaderProvider(first.id);
+          setLeaderModel(first.models[0]?.id ?? "default");
         }
-      })
-      .catch((err) => console.error("Failed to load providers:", err));
+      } catch (err) {
+        console.error("Failed to load providers:", err);
+      }
+    }
+    loadProviders();
+    return () => {
+      cancelled = true;
+    };
   }, [listProviders]);
 
-  const [teammates, setTeammates] = useState<
-    Array<{ name: string; provider: string; model?: string; colorIndex: number }>
-  >([
-    { name: "Coder Agent", provider: "codex", model: "gpt-4o", colorIndex: 1 },
-    { name: "Reviewer Agent", provider: "claude", model: "claude-3-7-sonnet", colorIndex: 2 },
+  const [teammates, setTeammates] = useState<Teammate[]>(() => [
+    newTeammate({ name: "Coder Agent", provider: "codex", model: "gpt-4o", colorIndex: 1 }),
+    newTeammate({
+      name: "Reviewer Agent",
+      provider: "claude",
+      model: "claude-3-7-sonnet",
+      colorIndex: 2,
+    }),
   ]);
 
   const providerList =
@@ -65,25 +109,37 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
             id: "claude",
             name: "Claude Code",
             status: "available",
-            models: [{ id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" }, { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet" }],
+            models: [
+              { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" },
+              { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet" },
+            ],
           },
           {
             id: "antigravity",
             name: "Antigravity",
             status: "available",
-            models: [{ id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }, { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" }],
+            models: [
+              { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+              { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" },
+            ],
           },
           {
             id: "codex",
             name: "Codex",
             status: "available",
-            models: [{ id: "gpt-4o", label: "GPT-4o" }, { id: "o3-mini", label: "o3-mini" }],
+            models: [
+              { id: "gpt-4o", label: "GPT-4o" },
+              { id: "o3-mini", label: "o3-mini" },
+            ],
           },
           {
             id: "opencode",
             name: "OpenCode",
             status: "available",
-            models: [{ id: "deepseek-r1", label: "DeepSeek R1" }, { id: "qwen-2.5-coder-32b", label: "Qwen 2.5 Coder" }],
+            models: [
+              { id: "deepseek-r1", label: "DeepSeek R1" },
+              { id: "qwen-2.5-coder-32b", label: "Qwen 2.5 Coder" },
+            ],
           },
         ];
 
@@ -93,17 +149,21 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
     const defaultModel = providerList[0]?.models?.[0]?.id ?? "default";
     setTeammates([
       ...teammates,
-      {
+      newTeammate({
         name: `Teammate ${teammates.length + 1}`,
         provider: defaultProvider,
         model: defaultModel,
         colorIndex: nextIdx,
-      },
+      }),
     ]);
   };
 
-  const handleRemoveTeammate = (index: number) => {
-    setTeammates(teammates.filter((_, i) => i !== index));
+  const handleUpdateTeammate = (key: string, patch: TeammatePatch) => {
+    setTeammates((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
+  };
+
+  const handleRemoveTeammate = (key: string) => {
+    setTeammates((prev) => prev.filter((t) => t.key !== key));
   };
 
   const handleSubmit = () => {
@@ -174,9 +234,7 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={[styles.label, { color: theme.colors.foreground }]}>
-              Workspace Mode
-            </Text>
+            <Text style={[styles.label, { color: theme.colors.foreground }]}>Workspace Mode</Text>
             <View style={styles.radioRow}>
               <Pressable
                 style={[
@@ -190,8 +248,7 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
                   style={[
                     styles.radioText,
                     {
-                      color:
-                        isolation === "shared" ? "#6366f1" : theme.colors.foregroundMuted,
+                      color: isolation === "shared" ? "#6366f1" : theme.colors.foregroundMuted,
                     },
                   ]}
                 >
@@ -211,8 +268,7 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
                   style={[
                     styles.radioText,
                     {
-                      color:
-                        isolation === "worktree" ? "#6366f1" : theme.colors.foregroundMuted,
+                      color: isolation === "worktree" ? "#6366f1" : theme.colors.foregroundMuted,
                     },
                   ]}
                 >
@@ -230,13 +286,19 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
             ]}
           >
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: "#818cf8" }]}>👑 Leader (Orchestrator)</Text>
+              <Text style={[styles.sectionTitle, { color: "#818cf8" }]}>
+                👑 Leader (Orchestrator)
+              </Text>
             </View>
 
             <Text style={[styles.sublabel, { color: theme.colors.foregroundMuted }]}>
               Select Provider:
             </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.providerScroll}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.providerScroll}
+            >
               {providerList.map((p) => {
                 const isSelected = leaderProvider === p.id;
                 return (
@@ -270,7 +332,11 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
             <Text style={[styles.sublabel, { color: theme.colors.foregroundMuted, marginTop: 8 }]}>
               Select Model:
             </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.providerScroll}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.providerScroll}
+            >
               {currentLeaderProviderObj?.models?.map((m) => {
                 const isSelected = leaderModel === m.id;
                 return (
@@ -308,114 +374,16 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
               </Pressable>
             </View>
 
-            {teammates.map((tm, idx) => {
-              const tmProviderObj = providerList.find((p) => p.id === tm.provider);
-              return (
-                <View
-                  key={idx}
-                  style={[
-                    styles.memberCard,
-                    {
-                      backgroundColor: theme.colors.surface2,
-                      borderColor: theme.colors.border,
-                    },
-                  ]}
-                >
-                  <View style={{ flex: 1, gap: 6 }}>
-                    <TextInput
-                      style={[
-                        styles.inputSmall,
-                        {
-                          color: theme.colors.foreground,
-                          borderColor: theme.colors.border,
-                          backgroundColor: theme.colors.surface1,
-                        },
-                      ]}
-                      value={tm.name}
-                      onChangeText={(val) => {
-                        const copy = [...teammates];
-                        copy[idx]!.name = val;
-                        setTeammates(copy);
-                      }}
-                      placeholder="Teammate Name"
-                      placeholderTextColor={theme.colors.foregroundMuted}
-                    />
-
-                    {/* Provider selector for teammate */}
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      {providerList.map((p) => {
-                        const isSelected = tm.provider === p.id;
-                        return (
-                          <Pressable
-                            key={p.id}
-                            onPress={() => {
-                              const copy = [...teammates];
-                              copy[idx]!.provider = p.id;
-                              if (p.models && p.models.length > 0) {
-                                copy[idx]!.model = p.models[0]!.id;
-                              }
-                              setTeammates(copy);
-                            }}
-                            style={[
-                              styles.providerChipMini,
-                              isSelected && styles.providerChipMiniActive,
-                              { borderColor: isSelected ? "#10b981" : theme.colors.border },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.providerChipTextMini,
-                                { color: isSelected ? "#34d399" : theme.colors.foregroundMuted },
-                              ]}
-                            >
-                              {p.name}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
-
-                    {/* Model selector for teammate */}
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      {tmProviderObj?.models?.map((m) => {
-                        const isSelected = tm.model === m.id;
-                        return (
-                          <Pressable
-                            key={m.id}
-                            onPress={() => {
-                              const copy = [...teammates];
-                              copy[idx]!.model = m.id;
-                              setTeammates(copy);
-                            }}
-                            style={[
-                              styles.modelChipMini,
-                              isSelected && styles.modelChipMiniActive,
-                              { borderColor: isSelected ? "#10b981" : theme.colors.border },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.modelChipTextMini,
-                                { color: isSelected ? "#34d399" : theme.colors.foregroundMuted },
-                              ]}
-                            >
-                              {m.label}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-
-                  <Pressable
-                    onPress={() => handleRemoveTeammate(idx)}
-                    style={styles.removeBtn}
-                  >
-                    <Text style={styles.removeBtnText}>✕</Text>
-                  </Pressable>
-                </View>
-              );
-            })}
+            {teammates.map((tm) => (
+              <TeammateCard
+                key={tm.key}
+                teammate={tm}
+                providers={providerList}
+                theme={theme}
+                onChange={(patch) => handleUpdateTeammate(tm.key, patch)}
+                onRemove={() => handleRemoveTeammate(tm.key)}
+              />
+            ))}
           </View>
         </ScrollView>
 
@@ -426,10 +394,7 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
           >
             <Text style={{ color: theme.colors.foreground }}>Cancel</Text>
           </Pressable>
-          <Pressable
-            onPress={handleSubmit}
-            style={[styles.actionBtn, styles.primaryBtn]}
-          >
+          <Pressable onPress={handleSubmit} style={[styles.actionBtn, styles.primaryBtn]}>
             <Text style={styles.primaryBtnText}>Create Team</Text>
           </Pressable>
         </View>
@@ -438,9 +403,122 @@ export function TeamCreateModal({ visible, theme, onClose, onCreate }: TeamCreat
   );
 }
 
+interface TeammateCardProps {
+  teammate: Teammate;
+  providers: ProviderOption[];
+  theme: PluginSurfaceProps["theme"];
+  onChange: (patch: TeammatePatch) => void;
+  onRemove: () => void;
+}
+
+function TeammateCard({ teammate, providers, theme, onChange, onRemove }: TeammateCardProps) {
+  const providerModels = providers.find((p) => p.id === teammate.provider)?.models;
+  return (
+    <View
+      style={[
+        styles.memberCard,
+        { backgroundColor: theme.colors.surface2, borderColor: theme.colors.border },
+      ]}
+    >
+      <View style={{ flex: 1, gap: 6 }}>
+        <TextInput
+          style={[
+            styles.inputSmall,
+            {
+              color: theme.colors.foreground,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surface1,
+            },
+          ]}
+          value={teammate.name}
+          onChangeText={(name) => onChange({ name })}
+          placeholder="Teammate Name"
+          placeholderTextColor={theme.colors.foregroundMuted}
+        />
+
+        {/* Provider selector for teammate */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {providers.map((p) => (
+            <MiniChip
+              key={p.id}
+              label={p.name}
+              selected={teammate.provider === p.id}
+              theme={theme}
+              chipStyle={styles.providerChipMini}
+              activeChipStyle={styles.providerChipMiniActive}
+              textStyle={styles.providerChipTextMini}
+              onPress={() => {
+                const firstModel = p.models[0];
+                onChange(
+                  firstModel ? { provider: p.id, model: firstModel.id } : { provider: p.id },
+                );
+              }}
+            />
+          ))}
+        </ScrollView>
+
+        {/* Model selector for teammate */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {providerModels?.map((m) => (
+            <MiniChip
+              key={m.id}
+              label={m.label}
+              selected={teammate.model === m.id}
+              theme={theme}
+              chipStyle={styles.modelChipMini}
+              activeChipStyle={styles.modelChipMiniActive}
+              textStyle={styles.modelChipTextMini}
+              onPress={() => onChange({ model: m.id })}
+            />
+          ))}
+        </ScrollView>
+      </View>
+
+      <Pressable onPress={onRemove} style={styles.removeBtn}>
+        <Text style={styles.removeBtnText}>✕</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+interface MiniChipProps {
+  label: string;
+  selected: boolean;
+  theme: PluginSurfaceProps["theme"];
+  chipStyle: StyleProp<ViewStyle>;
+  activeChipStyle: StyleProp<ViewStyle>;
+  textStyle: StyleProp<TextStyle>;
+  onPress: () => void;
+}
+
+function MiniChip({
+  label,
+  selected,
+  theme,
+  chipStyle,
+  activeChipStyle,
+  textStyle,
+  onPress,
+}: MiniChipProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        chipStyle,
+        selected && activeChipStyle,
+        { borderColor: selected ? "#10b981" : theme.colors.border },
+      ]}
+    >
+      <Text style={[textStyle, { color: selected ? "#34d399" : theme.colors.foregroundMuted }]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   backdrop: {
-    position: "fixed" as any,
+    position: FIXED_POSITION,
     top: 0,
     left: 0,
     right: 0,

@@ -1,11 +1,37 @@
 import React, { useState, useRef } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  TextInput,
+  Image,
+  type NativeSyntheticEvent,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import type { TeamConfig, TeamSlot, ChatMessage, ProviderOption, ChatAttachment } from "../../shared/contracts.js";
+import type {
+  TeamConfig,
+  TeamSlot,
+  ChatMessage,
+  ProviderOption,
+  ChatAttachment,
+} from "../../shared/contracts.js";
 import { getSlotColor } from "../theme/member-colors.js";
 import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu.js";
 import { ImageAttachmentBar } from "./ImageAttachmentBar.js";
 import { ModelSelectorModal } from "./ModelSelectorModal.js";
+import {
+  imageFilesFromPaste,
+  isSubmitKeyPress,
+  readImageAttachments,
+  type PasteEventLike,
+  type WebKeyPressData,
+} from "../chat-input.js";
+
+const STATUS_COLORS: Record<string, string> = { busy: "#3b82f6", error: "#ef4444" };
 
 interface ParallelChatViewProps {
   team: TeamConfig;
@@ -34,7 +60,7 @@ export function ParallelChatView({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [selectedSlotForModel, setSelectedSlotForModel] = useState<TeamSlot | null>(null);
 
-  const fileInputRef = useRef<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const targetSlotId = activeSlotId ?? team.slots[0]?.slotId ?? "";
   const targetSlot = team.slots.find((s) => s.slotId === targetSlotId);
@@ -53,68 +79,21 @@ export function ParallelChatView({
     setShowSlashMenu(false);
   };
 
+  const stageImages = async (files: File[], unnamedPrefix: string) => {
+    const added = await readImageAttachments(files, unnamedPrefix, stagedAttachments.length);
+    if (added.length > 0) setStagedAttachments((prev) => [...prev, ...added]);
+  };
+
   // Web clipboard paste listener for images
-  const handlePaste = (e: any) => {
-    const clipboardData = e.clipboardData || e.nativeEvent?.clipboardData || (window as any)?.clipboardData;
-    if (!clipboardData) return;
-
-    const items = clipboardData.items;
-    if (!items) return;
-
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type && item.type.indexOf("image") !== -1) {
-        const file = item.getAsFile();
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (event: any) => {
-            const dataUrl = event.target?.result as string;
-            if (dataUrl) {
-              setStagedAttachments((prev) => [
-                ...prev,
-                {
-                  id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                  type: "image",
-                  name: file.name || `Pasted Image ${prev.length + 1}`,
-                  dataUrl,
-                },
-              ]);
-            }
-          };
-          reader.readAsDataURL(file);
-        }
-      }
-    }
+  const handlePaste = (e: PasteEventLike) => {
+    stageImages(imageFilesFromPaste(e), "Pasted Image");
   };
 
   // File upload trigger
-  const handleFileChange = (e: any) => {
-    const files = e.target?.files;
-    if (!files || files.length === 0) return;
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = (event: any) => {
-          const dataUrl = event.target?.result as string;
-          if (dataUrl) {
-            setStagedAttachments((prev) => [
-              ...prev,
-              {
-                id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                type: "image",
-                name: file.name,
-                dataUrl,
-              },
-            ]);
-          }
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-    // reset input
-    if (e.target) e.target.value = "";
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    stageImages(files, "Image");
   };
 
   const handleSend = async () => {
@@ -136,6 +115,12 @@ export function ParallelChatView({
 
   const handleQuickPrompt = (prompt: string) => {
     setInputText(prompt);
+  };
+
+  const handleKeyPress = (e: NativeSyntheticEvent<WebKeyPressData>) => {
+    if (!isSubmitKeyPress(e)) return;
+    e.preventDefault();
+    handleSend();
   };
 
   return (
@@ -194,17 +179,10 @@ export function ParallelChatView({
                   },
                 ]}
               >
-                <Pressable
-                  onPress={() => onSelectSlot(slot.slotId)}
-                  style={styles.headerTitleRow}
-                >
-                  <Text style={[styles.roleEmoji]}>
-                    {slot.role === "leader" ? "👑" : "🤖"}
-                  </Text>
+                <Pressable onPress={() => onSelectSlot(slot.slotId)} style={styles.headerTitleRow}>
+                  <Text style={[styles.roleEmoji]}>{slot.role === "leader" ? "👑" : "🤖"}</Text>
                   <View>
-                    <Text style={[styles.slotName, { color: color.text }]}>
-                      {slot.name}
-                    </Text>
+                    <Text style={[styles.slotName, { color: color.text }]}>{slot.name}</Text>
                     {slot.model && (
                       <Text style={[styles.modelSubtitle, { color: color.text }]} numberOfLines={1}>
                         {slot.model}
@@ -234,12 +212,7 @@ export function ParallelChatView({
                     style={[
                       styles.statusBadge,
                       {
-                        backgroundColor:
-                          slot.status === "busy"
-                            ? "#3b82f6"
-                            : slot.status === "error"
-                            ? "#ef4444"
-                            : "#10b981",
+                        backgroundColor: STATUS_COLORS[slot.status] ?? "#10b981",
                       },
                     ]}
                   />
@@ -250,13 +223,19 @@ export function ParallelChatView({
               <View
                 style={[
                   styles.subHeader,
-                  { borderBottomColor: theme.colors.border, backgroundColor: theme.colors.surface1 },
+                  {
+                    borderBottomColor: theme.colors.border,
+                    backgroundColor: theme.colors.surface1,
+                  },
                 ]}
               >
                 <Text style={[styles.roleTag, { color: theme.colors.foregroundMuted }]}>
                   {slot.role === "leader" ? "👑 ORCHESTRATOR" : "🤖 TEAMMATE SLOT"}
                 </Text>
-                <Text style={[styles.instructionText, { color: theme.colors.foreground }]} numberOfLines={2}>
+                <Text
+                  style={[styles.instructionText, { color: theme.colors.foreground }]}
+                  numberOfLines={2}
+                >
                   {slot.instruction ||
                     (slot.role === "leader"
                       ? "Receives user goals, decomposes tasks, and delegates to teammates."
@@ -265,7 +244,10 @@ export function ParallelChatView({
               </View>
 
               {/* Chat Timeline */}
-              <ScrollView style={styles.chatTimeline} contentContainerStyle={styles.timelineContent}>
+              <ScrollView
+                style={styles.chatTimeline}
+                contentContainerStyle={styles.timelineContent}
+              >
                 {slotMessages.length === 0 ? (
                   <View style={styles.emptyTimeline}>
                     <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
@@ -277,44 +259,50 @@ export function ParallelChatView({
                     const isUser = msg.sender === "user";
                     const isSystem = msg.sender === "system";
 
+                    let bubbleStyle: StyleProp<ViewStyle>;
+                    let senderColor: string;
+                    let senderLabel: string;
+                    if (isUser) {
+                      bubbleStyle = [styles.userBubble, { backgroundColor: "#6366f1" }];
+                      senderColor = "#fff";
+                      senderLabel = "You";
+                    } else if (isSystem) {
+                      bubbleStyle = [
+                        styles.systemBubble,
+                        {
+                          backgroundColor: theme.colors.surface1,
+                          borderColor: theme.colors.border,
+                        },
+                      ];
+                      senderColor = theme.colors.foregroundMuted;
+                      senderLabel = "System";
+                    } else {
+                      bubbleStyle = [
+                        styles.agentBubble,
+                        {
+                          backgroundColor: theme.colors.surface1,
+                          borderLeftColor: color.primary,
+                          borderColor: theme.colors.border,
+                        },
+                      ];
+                      senderColor = color.text;
+                      senderLabel = slot.name;
+                    }
+
                     return (
-                      <View
-                        key={msg.id}
-                        style={[
-                          styles.messageBubble,
-                          isUser
-                            ? [styles.userBubble, { backgroundColor: "#6366f1" }]
-                            : isSystem
-                            ? [
-                                styles.systemBubble,
-                                {
-                                  backgroundColor: theme.colors.surface1,
-                                  borderColor: theme.colors.border,
-                                },
-                              ]
-                            : [
-                                styles.agentBubble,
-                                {
-                                  backgroundColor: theme.colors.surface1,
-                                  borderLeftColor: color.primary,
-                                  borderColor: theme.colors.border,
-                                },
-                              ],
-                        ]}
-                      >
+                      <View key={msg.id} style={[styles.messageBubble, bubbleStyle]}>
                         <View style={styles.messageHeader}>
-                          <Text
-                            style={[
-                              styles.messageSender,
-                              { color: isUser ? "#fff" : isSystem ? theme.colors.foregroundMuted : color.text },
-                            ]}
-                          >
-                            {isUser ? "You" : isSystem ? "System" : slot.name}
+                          <Text style={[styles.messageSender, { color: senderColor }]}>
+                            {senderLabel}
                           </Text>
                           <Text
                             style={[
                               styles.messageTime,
-                              { color: isUser ? "rgba(255,255,255,0.7)" : theme.colors.foregroundMuted },
+                              {
+                                color: isUser
+                                  ? "rgba(255,255,255,0.7)"
+                                  : theme.colors.foregroundMuted,
+                              },
                             ]}
                           >
                             {new Date(msg.timestamp).toLocaleTimeString([], {
@@ -326,17 +314,7 @@ export function ParallelChatView({
 
                         {/* Image Attachments in Message */}
                         {msg.attachments && msg.attachments.length > 0 && (
-                          <View style={styles.msgAttachmentsGrid}>
-                            {msg.attachments.map((att) => (
-                              <View key={att.id} style={styles.msgImageWrapper}>
-                                <Image
-                                  source={{ uri: att.dataUrl }}
-                                  style={styles.msgImage}
-                                  resizeMode="contain"
-                                />
-                              </View>
-                            ))}
-                          </View>
+                          <MessageAttachments attachments={msg.attachments} />
                         )}
 
                         {msg.content ? (
@@ -421,9 +399,7 @@ export function ParallelChatView({
                     },
                   ]}
                 >
-                  <Text style={styles.targetChipEmoji}>
-                    {s.role === "leader" ? "👑" : "🤖"}
-                  </Text>
+                  <Text style={styles.targetChipEmoji}>{s.role === "leader" ? "👑" : "🤖"}</Text>
                   <Text
                     style={[
                       styles.targetChipText,
@@ -440,8 +416,15 @@ export function ParallelChatView({
           {/* Quick Prompts */}
           <View style={styles.quickPromptsRow}>
             <Pressable
-              onPress={() => handleQuickPrompt("/plan Phân tích yêu cầu và lập kế hoạch triển khai chi tiết cho team")}
-              style={[styles.quickPromptPill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+              onPress={() =>
+                handleQuickPrompt(
+                  "/plan Phân tích yêu cầu và lập kế hoạch triển khai chi tiết cho team",
+                )
+              }
+              style={[
+                styles.quickPromptPill,
+                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+              ]}
             >
               <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
                 🏗️ /plan
@@ -449,7 +432,10 @@ export function ParallelChatView({
             </Pressable>
             <Pressable
               onPress={() => handleQuickPrompt("/review Kiểm tra chất lượng mã nguồn và bảo mật")}
-              style={[styles.quickPromptPill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+              style={[
+                styles.quickPromptPill,
+                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+              ]}
             >
               <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
                 🔍 /review
@@ -457,7 +443,10 @@ export function ParallelChatView({
             </Pressable>
             <Pressable
               onPress={() => handleQuickPrompt("/test Viết unit test và kiểm tra regression")}
-              style={[styles.quickPromptPill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+              style={[
+                styles.quickPromptPill,
+                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+              ]}
             >
               <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
                 ⚡ /test
@@ -465,7 +454,10 @@ export function ParallelChatView({
             </Pressable>
             <Pressable
               onPress={() => handleQuickPrompt("/status")}
-              style={[styles.quickPromptPill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+              style={[
+                styles.quickPromptPill,
+                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+              ]}
             >
               <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
                 📊 /status
@@ -525,12 +517,7 @@ export function ParallelChatView({
               placeholderTextColor={theme.colors.foregroundMuted}
               value={inputText}
               onChangeText={handleInputChange}
-              onKeyPress={(e: any) => {
-                if (e.nativeEvent?.key === "Enter" && !e.nativeEvent?.shiftKey) {
-                  if (typeof e.preventDefault === "function") e.preventDefault();
-                  handleSend();
-                }
-              }}
+              onKeyPress={handleKeyPress}
             />
           </View>
 
@@ -544,12 +531,22 @@ export function ParallelChatView({
             onPress={handleSend}
             disabled={(!inputText.trim() && stagedAttachments.length === 0) || sending}
           >
-            <Text style={styles.sendBtnText}>
-              {sending ? "Sending..." : "Send 🚀"}
-            </Text>
+            <Text style={styles.sendBtnText}>{sending ? "Sending..." : "Send 🚀"}</Text>
           </Pressable>
         </View>
       </View>
+    </View>
+  );
+}
+
+function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+  return (
+    <View style={styles.msgAttachmentsGrid}>
+      {attachments.map((att) => (
+        <View key={att.id} style={styles.msgImageWrapper}>
+          <Image source={{ uri: att.dataUrl }} style={styles.msgImage} resizeMode="contain" />
+        </View>
+      ))}
     </View>
   );
 }

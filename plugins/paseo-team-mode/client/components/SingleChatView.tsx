@@ -1,11 +1,35 @@
 import React, { useState, useRef } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  TextInput,
+  Image,
+  type NativeSyntheticEvent,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import type { TeamConfig, TeamSlot, ChatMessage, ProviderOption, ChatAttachment } from "../../shared/contracts.js";
+import type {
+  TeamConfig,
+  TeamSlot,
+  ChatMessage,
+  ProviderOption,
+  ChatAttachment,
+} from "../../shared/contracts.js";
 import { getSlotColor } from "../theme/member-colors.js";
 import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu.js";
 import { ImageAttachmentBar } from "./ImageAttachmentBar.js";
 import { ModelSelectorModal } from "./ModelSelectorModal.js";
+import {
+  imageFilesFromPaste,
+  isSubmitKeyPress,
+  readImageAttachments,
+  type PasteEventLike,
+  type WebKeyPressData,
+} from "../chat-input.js";
 
 interface SingleChatViewProps {
   team: TeamConfig;
@@ -34,7 +58,7 @@ export function SingleChatView({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [showModelModal, setShowModelModal] = useState(false);
 
-  const fileInputRef = useRef<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const color = getSlotColor(slot.colorIndex);
   const slotMessages = messages.filter((m) => m.slotId === slot.slotId);
@@ -53,65 +77,19 @@ export function SingleChatView({
     setShowSlashMenu(false);
   };
 
-  const handlePaste = (e: any) => {
-    const clipboardData = e.clipboardData || e.nativeEvent?.clipboardData || (window as any)?.clipboardData;
-    if (!clipboardData) return;
-
-    const items = clipboardData.items;
-    if (!items) return;
-
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type && item.type.indexOf("image") !== -1) {
-        const file = item.getAsFile();
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (event: any) => {
-            const dataUrl = event.target?.result as string;
-            if (dataUrl) {
-              setStagedAttachments((prev) => [
-                ...prev,
-                {
-                  id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                  type: "image",
-                  name: file.name || `Pasted Image ${prev.length + 1}`,
-                  dataUrl,
-                },
-              ]);
-            }
-          };
-          reader.readAsDataURL(file);
-        }
-      }
-    }
+  const stageImages = async (files: File[], unnamedPrefix: string) => {
+    const added = await readImageAttachments(files, unnamedPrefix, stagedAttachments.length);
+    if (added.length > 0) setStagedAttachments((prev) => [...prev, ...added]);
   };
 
-  const handleFileChange = (e: any) => {
-    const files = e.target?.files;
-    if (!files || files.length === 0) return;
+  const handlePaste = (e: PasteEventLike) => {
+    stageImages(imageFilesFromPaste(e), "Pasted Image");
+  };
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = (event: any) => {
-          const dataUrl = event.target?.result as string;
-          if (dataUrl) {
-            setStagedAttachments((prev) => [
-              ...prev,
-              {
-                id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                type: "image",
-                name: file.name,
-                dataUrl,
-              },
-            ]);
-          }
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-    if (e.target) e.target.value = "";
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    stageImages(files, "Image");
   };
 
   const handleSend = async () => {
@@ -133,6 +111,12 @@ export function SingleChatView({
 
   const handleQuickPrompt = (text: string) => {
     setInputText(text);
+  };
+
+  const handleKeyPress = (e: NativeSyntheticEvent<WebKeyPressData>) => {
+    if (!isSubmitKeyPress(e)) return;
+    e.preventDefault();
+    handleSend();
   };
 
   return (
@@ -295,46 +279,41 @@ export function SingleChatView({
             const isUser = msg.sender === "user";
             const isSystem = msg.sender === "system";
 
+            let bubbleStyle: StyleProp<ViewStyle>;
+            let senderColor: string;
+            let senderLabel: string;
+            if (isUser) {
+              bubbleStyle = [styles.userBubble, { backgroundColor: "#6366f1" }];
+              senderColor = "#fff";
+              senderLabel = "You";
+            } else if (isSystem) {
+              bubbleStyle = [
+                styles.systemBubble,
+                { backgroundColor: theme.colors.surface1, borderColor: theme.colors.border },
+              ];
+              senderColor = theme.colors.foregroundMuted;
+              senderLabel = "System";
+            } else {
+              bubbleStyle = [
+                styles.agentBubble,
+                {
+                  backgroundColor: theme.colors.surface1,
+                  borderColor: theme.colors.border,
+                  borderLeftColor: color.primary,
+                },
+              ];
+              senderColor = color.text;
+              senderLabel = slot.name;
+            }
+
             return (
               <View
                 key={msg.id}
-                style={[
-                  styles.messageRow,
-                  isUser ? styles.userRow : styles.agentRow,
-                ]}
+                style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}
               >
-                <View
-                  style={[
-                    styles.bubble,
-                    isUser
-                      ? [styles.userBubble, { backgroundColor: "#6366f1" }]
-                      : isSystem
-                      ? [
-                          styles.systemBubble,
-                          {
-                            backgroundColor: theme.colors.surface1,
-                            borderColor: theme.colors.border,
-                          },
-                        ]
-                      : [
-                          styles.agentBubble,
-                          {
-                            backgroundColor: theme.colors.surface1,
-                            borderColor: theme.colors.border,
-                            borderLeftColor: color.primary,
-                          },
-                        ],
-                  ]}
-                >
+                <View style={[styles.bubble, bubbleStyle]}>
                   <View style={styles.meta}>
-                    <Text
-                      style={[
-                        styles.senderName,
-                        { color: isUser ? "#fff" : isSystem ? theme.colors.foregroundMuted : color.text },
-                      ]}
-                    >
-                      {isUser ? "You" : isSystem ? "System" : slot.name}
-                    </Text>
+                    <Text style={[styles.senderName, { color: senderColor }]}>{senderLabel}</Text>
                     <Text
                       style={[
                         styles.time,
@@ -362,10 +341,7 @@ export function SingleChatView({
 
                   {msg.content ? (
                     <Text
-                      style={[
-                        styles.content,
-                        { color: isUser ? "#fff" : theme.colors.foreground },
-                      ]}
+                      style={[styles.content, { color: isUser ? "#fff" : theme.colors.foreground }]}
                     >
                       {msg.content}
                     </Text>
@@ -401,25 +377,37 @@ export function SingleChatView({
         <View style={styles.quickBar}>
           <Pressable
             onPress={() => handleQuickPrompt("/plan ")}
-            style={[styles.pill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+            style={[
+              styles.pill,
+              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+            ]}
           >
             <Text style={[styles.pillText, { color: theme.colors.foreground }]}>🏗️ /plan</Text>
           </Pressable>
           <Pressable
             onPress={() => handleQuickPrompt("/review ")}
-            style={[styles.pill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+            style={[
+              styles.pill,
+              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+            ]}
           >
             <Text style={[styles.pillText, { color: theme.colors.foreground }]}>🔍 /review</Text>
           </Pressable>
           <Pressable
             onPress={() => handleQuickPrompt("/test ")}
-            style={[styles.pill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+            style={[
+              styles.pill,
+              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+            ]}
           >
             <Text style={[styles.pillText, { color: theme.colors.foreground }]}>⚡ /test</Text>
           </Pressable>
           <Pressable
             onPress={() => handleQuickPrompt("/status")}
-            style={[styles.pill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }]}
+            style={[
+              styles.pill,
+              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+            ]}
           >
             <Text style={[styles.pillText, { color: theme.colors.foreground }]}>📊 /status</Text>
           </Pressable>
@@ -475,12 +463,7 @@ export function SingleChatView({
               placeholderTextColor={theme.colors.foregroundMuted}
               value={inputText}
               onChangeText={handleInputChange}
-              onKeyPress={(e: any) => {
-                if (e.nativeEvent?.key === "Enter" && !e.nativeEvent?.shiftKey) {
-                  if (typeof e.preventDefault === "function") e.preventDefault();
-                  handleSend();
-                }
-              }}
+              onKeyPress={handleKeyPress}
             />
           </View>
 
@@ -494,9 +477,7 @@ export function SingleChatView({
             onPress={handleSend}
             disabled={(!inputText.trim() && stagedAttachments.length === 0) || sending}
           >
-            <Text style={styles.sendBtnText}>
-              {sending ? "Sending..." : "Send 🚀"}
-            </Text>
+            <Text style={styles.sendBtnText}>{sending ? "Sending..." : "Send 🚀"}</Text>
           </Pressable>
         </View>
       </View>

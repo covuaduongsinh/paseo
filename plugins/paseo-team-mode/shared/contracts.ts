@@ -17,13 +17,7 @@ export const TeamSlotSchema = z.object({
 });
 export type TeamSlot = z.infer<typeof TeamSlotSchema>;
 
-export const TeamTaskStatusSchema = z.enum([
-  "backlog",
-  "in_progress",
-  "blocked",
-  "done",
-  "failed",
-]);
+export const TeamTaskStatusSchema = z.enum(["backlog", "in_progress", "blocked", "done", "failed"]);
 export type TeamTaskStatus = z.infer<typeof TeamTaskStatusSchema>;
 
 export const TeamTaskSchema = z.object({
@@ -221,4 +215,3 @@ export const updateSlotProviderRpc = defineRpc({
     team: TeamConfigSchema,
   }),
 });
-

@@ -22,7 +22,11 @@ export function ImageAttachmentBar({ attachments, theme, onRemove }: ImageAttach
         },
       ]}
     >
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+      >
         {attachments.map((att) => (
           <View
             key={att.id}

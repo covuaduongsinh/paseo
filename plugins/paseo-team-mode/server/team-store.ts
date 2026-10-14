@@ -106,7 +106,11 @@ export class TeamStore {
     }
   }
 
-  async updateSlotStatus(teamId: string, slotId: string, status: "idle" | "busy" | "waiting_approval" | "error") {
+  async updateSlotStatus(
+    teamId: string,
+    slotId: string,
+    status: "idle" | "busy" | "waiting_approval" | "error",
+  ) {
     await this.ensureInitialized();
     const team = this.data.teams[teamId];
     if (!team) return;
@@ -118,7 +122,12 @@ export class TeamStore {
     }
   }
 
-  async updateSlotProvider(teamId: string, slotId: string, provider: string, model?: string): Promise<TeamConfig> {
+  async updateSlotProvider(
+    teamId: string,
+    slotId: string,
+    provider: string,
+    model?: string,
+  ): Promise<TeamConfig> {
     await this.ensureInitialized();
     const team = this.data.teams[teamId];
     if (!team) throw new Error(`Team ${teamId} not found`);

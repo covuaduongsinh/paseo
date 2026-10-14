@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import { View, Text, StyleSheet, ScrollView } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { TeamTask, TeamSlot, TeamTaskStatus } from "../../shared/contracts.js";
 import { getSlotColor } from "../theme/member-colors.js";
@@ -8,7 +8,6 @@ interface KanbanBoardProps {
   tasks: TeamTask[];
   slots: TeamSlot[];
   theme: PluginSurfaceProps["theme"];
-  onUpdateStatus?: (taskId: string, status: TeamTaskStatus) => void;
 }
 
 const COLUMNS: { key: TeamTaskStatus; label: string; color: string }[] = [
@@ -18,7 +17,7 @@ const COLUMNS: { key: TeamTaskStatus; label: string; color: string }[] = [
   { key: "done", label: "Done", color: "#10b981" },
 ];
 
-export function KanbanBoard({ tasks, slots, theme, onUpdateStatus }: KanbanBoardProps) {
+export function KanbanBoard({ tasks, slots, theme }: KanbanBoardProps) {
   const slotMap = useMemo(() => {
     const map = new Map<string, TeamSlot>();
     slots.forEach((s) => map.set(s.slotId, s));
@@ -98,7 +97,9 @@ export function KanbanBoard({ tasks, slots, theme, onUpdateStatus }: KanbanBoard
                           </Text>
                         </View>
                       ) : (
-                        <Text style={[styles.unassignedText, { color: theme.colors.foregroundMuted }]}>
+                        <Text
+                          style={[styles.unassignedText, { color: theme.colors.foregroundMuted }]}
+                        >
                           Unassigned
                         </Text>
                       )}

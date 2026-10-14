@@ -19,11 +19,11 @@ import {
 import { ParallelChatView } from "./components/ParallelChatView.js";
 import { SingleChatView } from "./components/SingleChatView.js";
 import { KanbanBoard } from "./components/KanbanBoard.js";
-import { TeamCreateModal } from "./components/TeamCreateModal.js";
+import { TeamCreateModal, type NewTeamInput } from "./components/TeamCreateModal.js";
 
 type ViewMode = "parallel" | "single" | "kanban";
 
-export function TeamDashboardScreen({ theme, layout }: PluginSurfaceProps) {
+export function TeamDashboardScreen({ theme }: PluginSurfaceProps) {
   const [teams, setTeams] = useState<TeamConfig[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TeamTask[]>([]);
@@ -116,7 +116,58 @@ export function TeamDashboardScreen({ theme, layout }: PluginSurfaceProps) {
   const activeSlot =
     selectedTeam?.slots.find((s) => s.slotId === activeSlotId) ?? selectedTeam?.slots[0];
 
-  const handleCreateTeam = async (params: any) => {
+  const renderWorkArea = () => {
+    if (!selectedTeam) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyTitle, { color: theme.colors.foreground }]}>
+            No Team Configured
+          </Text>
+          <Text style={[styles.emptySubtitle, { color: theme.colors.foregroundMuted }]}>
+            Create a multi-agent team to enable Leader orchestration, parallel teammates, and task
+            boards.
+          </Text>
+          <Pressable
+            onPress={() => setShowCreateModal(true)}
+            style={[styles.actionBtn, styles.primaryBtn]}
+          >
+            <Text style={{ color: "#ffffff", fontWeight: "bold" }}>+ Create Your First Team</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    if (viewMode === "parallel") {
+      return (
+        <ParallelChatView
+          team={selectedTeam}
+          messages={messages}
+          providers={providers}
+          theme={theme}
+          activeSlotId={activeSlotId}
+          onSelectSlot={setActiveSlotId}
+          onSendPrompt={handleSendPrompt}
+          onChangeProvider={handleChangeProvider}
+        />
+      );
+    }
+    if (viewMode === "single" && activeSlot) {
+      return (
+        <SingleChatView
+          team={selectedTeam}
+          slot={activeSlot}
+          messages={messages}
+          providers={providers}
+          theme={theme}
+          onSelectSlot={setActiveSlotId}
+          onSendPrompt={handleSendPrompt}
+          onChangeProvider={handleChangeProvider}
+        />
+      );
+    }
+    return <KanbanBoard tasks={tasks} slots={selectedTeam.slots} theme={theme} />;
+  };
+
+  const handleCreateTeam = async (params: NewTeamInput) => {
     try {
       const res = await createTeam({
         projectId: currentProjectId,
@@ -306,56 +357,7 @@ export function TeamDashboardScreen({ theme, layout }: PluginSurfaceProps) {
       </View>
 
       {/* Main Content Area */}
-      <View style={styles.contentArea}>
-        {selectedTeam ? (
-          viewMode === "parallel" ? (
-            <ParallelChatView
-              team={selectedTeam}
-              messages={messages}
-              providers={providers}
-              theme={theme}
-              activeSlotId={activeSlotId}
-              onSelectSlot={setActiveSlotId}
-              onSendPrompt={handleSendPrompt}
-              onChangeProvider={handleChangeProvider}
-            />
-          ) : viewMode === "single" && activeSlot ? (
-            <SingleChatView
-              team={selectedTeam}
-              slot={activeSlot}
-              messages={messages}
-              providers={providers}
-              theme={theme}
-              onSelectSlot={setActiveSlotId}
-              onSendPrompt={handleSendPrompt}
-              onChangeProvider={handleChangeProvider}
-            />
-          ) : (
-            <KanbanBoard
-              tasks={tasks}
-              slots={selectedTeam.slots}
-              theme={theme}
-              onUpdateStatus={() => fetchTasks(selectedTeam.id)}
-            />
-          )
-        ) : (
-          <View style={styles.emptyContainer}>
-            <Text style={[styles.emptyTitle, { color: theme.colors.foreground }]}>
-              No Team Configured
-            </Text>
-            <Text style={[styles.emptySubtitle, { color: theme.colors.foregroundMuted }]}>
-              Create a multi-agent team to enable Leader orchestration, parallel teammates, and task
-              boards.
-            </Text>
-            <Pressable
-              onPress={() => setShowCreateModal(true)}
-              style={[styles.actionBtn, styles.primaryBtn]}
-            >
-              <Text style={{ color: "#ffffff", fontWeight: "bold" }}>+ Create Your First Team</Text>
-            </Pressable>
-          </View>
-        )}
-      </View>
+      <View style={styles.contentArea}>{renderWorkArea()}</View>
 
       {showCreateModal && (
         <TeamCreateModal

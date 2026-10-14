@@ -1,28 +1,19 @@
 # Kế hoạch: làm sạch lint cho plugins/paseo-team-mode
 
+Trạng thái: **đã xong** (2026-10-14).
+
 ## Bối cảnh
 
-Plugin `plugins/paseo-team-mode/` được commit vào fork ngày 2026-10-14 mà chưa từng qua `npm run lint`. Khi đồng bộ upstream, lint báo 312 lỗi trong plugin này, nên nó đang bị loại khỏi lint tạm thời bằng `ignorePatterns` trong `.oxlintrc.json`. Việc này là để gỡ khoản nợ đó.
+Plugin `plugins/paseo-team-mode/` vào fork mà chưa từng qua `npm run lint`. Sau khi đồng bộ upstream, lint báo 312 lỗi.
 
-## Phân loại lỗi (lần chạy 2026-10-14)
+## Đã làm
 
-| Rule                                     | Số lỗi | Ghi chú                                                     |
-| ---------------------------------------- | ------ | ----------------------------------------------------------- |
-| `react-perf/jsx-no-new-array-as-prop`    | 148    | Mảng tạo mới trong props → đưa ra hằng số hoặc `useMemo`    |
-| `react-perf/jsx-no-new-function-as-prop` | 68     | Hàm tạo mới trong props → `useCallback` hoặc tách component |
-| `typescript-eslint/no-explicit-any`      | 24     | Thay bằng kiểu suy ra từ Zod trong `shared/contracts.ts`    |
-| `react-perf/jsx-no-new-object-as-prop`   | 18     | Style/object inline                                         |
-| `no-nested-ternary`                      | 13     | Tách if/else                                                |
-| `react-hooks/rules-of-hooks`             | 12     | **Ưu tiên cao**: có thể là bug thật, không chỉ style        |
-| còn lại                                  | ~30    | `jsx-max-depth`, `prefer-add-event-listener`...             |
+- 12 lỗi `rules-of-hooks` là bug thật: `TeamCreateModal` và `ModelSelectorModal` gọi hook sau `return null`, nên React ném lỗi khi `visible` đổi từ false sang true. Mỗi modal tách thành vỏ (trả `null`) và lõi (chứa hook).
+- Bỏ toàn bộ `any`: `server/rpc-handlers.ts` dùng kiểu của `context.paseo`; logic đọc ảnh và phím Enter của hai view chat gom vào `client/chat-input.ts`; `position: "fixed"` dùng `FIXED_POSITION` trong `client/theme/overlay.ts`.
+- Ternary lồng nhau, `jsx-max-depth`, `exhaustive-deps`, key theo index: sửa bằng `if/else`, component `MiniChip`, `TeammateCard`, `MessageAttachments`, và key ổn định cho teammate. `TeammateCard` cũng bỏ kiểu sửa trực tiếp object trong state.
+- 233 lỗi `react-perf` (mảng, object, hàm tạo mới trong props) không sửa; khối `overrides` trong `.oxlintrc.json` tắt ba rule này cho `plugins/paseo-team-mode/client/**`. Style array của React Native được miễn theo cùng lý do với `packages/app`. Object và callback inline là nợ còn lại, chỉ được thu hẹp.
 
-## Các bước
+## Còn mở
 
-1. Sửa 12 lỗi `rules-of-hooks` trước, kiểm tra hành vi từng chỗ.
-2. Thay `any` bằng kiểu từ Zod (xem `server/rpc-handlers.ts`, handler `listProvidersRpc`).
-3. Xử lý nhóm `react-perf` theo component: `ParallelChatView`, `SingleChatView`, `TeamCreateModal`, `ModelSelectorModal`, `KanbanBoard`.
-4. Gỡ `plugins/paseo-team-mode/**` khỏi `ignorePatterns`, chạy `npm run lint`, `npm run typecheck`, `npm run format`.
-
-## Hoàn tất khi
-
-`npm run lint` xanh với plugin không còn trong `ignorePatterns`.
+- Host không truyền `projectId` cho surface của plugin, nên mọi team dùng chung nhóm `"default"` (`client/TeamDashboardScreen.tsx`). Muốn tách theo project cần đổi plugin sang panel theo workspace (`PluginWorkspacePanelProps` có `workspaceId`). Đây là quyết định thiết kế, chưa làm.
+- Thu hẹp override `react-perf` khi có thời gian: bọc `useCallback`/`useMemo` cho `ParallelChatView` và `SingleChatView` trước.
