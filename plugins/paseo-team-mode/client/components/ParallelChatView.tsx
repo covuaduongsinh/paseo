@@ -1,14 +1,12 @@
-import React, { useState, useRef } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   Pressable,
-  TextInput,
   Image,
-  type NativeSyntheticEvent,
-  type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
@@ -20,24 +18,30 @@ import type {
   ChatAttachment,
 } from "../../shared/contracts.js";
 import { getSlotColor } from "../theme/member-colors.js";
-import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu.js";
-import { ImageAttachmentBar } from "./ImageAttachmentBar.js";
+import { ChatComposer, type QuickPrompt } from "./ChatComposer.js";
 import { ModelSelectorModal } from "./ModelSelectorModal.js";
-import {
-  imageFilesFromPaste,
-  isSubmitKeyPress,
-  readImageAttachments,
-  type PasteEventLike,
-  type WebKeyPressData,
-} from "../chat-input.js";
+
+type Theme = PluginSurfaceProps["theme"];
+type SlotColor = ReturnType<typeof getSlotColor>;
 
 const STATUS_COLORS: Record<string, string> = { busy: "#3b82f6", error: "#ef4444" };
+const NO_MESSAGES: ChatMessage[] = [];
+
+const QUICK_PROMPTS: readonly QuickPrompt[] = [
+  {
+    label: "🏗️ /plan",
+    prompt: "/plan Phân tích yêu cầu và lập kế hoạch triển khai chi tiết cho team",
+  },
+  { label: "🔍 /review", prompt: "/review Kiểm tra chất lượng mã nguồn và bảo mật" },
+  { label: "⚡ /test", prompt: "/test Viết unit test và kiểm tra regression" },
+  { label: "📊 /status", prompt: "/status" },
+];
 
 interface ParallelChatViewProps {
   team: TeamConfig;
   messages: ChatMessage[];
   providers: ProviderOption[];
-  theme: PluginSurfaceProps["theme"];
+  theme: Theme;
   activeSlotId?: string;
   onSelectSlot: (slotId: string) => void;
   onSendPrompt: (slotId: string, prompt: string, attachments?: ChatAttachment[]) => Promise<void>;
@@ -55,486 +59,379 @@ export function ParallelChatView({
   onChangeProvider,
 }: ParallelChatViewProps) {
   const [inputText, setInputText] = useState("");
-  const [sending, setSending] = useState(false);
-  const [stagedAttachments, setStagedAttachments] = useState<ChatAttachment[]>([]);
-  const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [selectedSlotForModel, setSelectedSlotForModel] = useState<TeamSlot | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const targetSlotId = activeSlotId ?? team.slots[0]?.slotId ?? "";
   const targetSlot = team.slots.find((s) => s.slotId === targetSlotId);
 
-  const handleInputChange = (text: string) => {
-    setInputText(text);
-    if (text.startsWith("/")) {
-      setShowSlashMenu(true);
-    } else {
-      setShowSlashMenu(false);
+  const messagesBySlot = useMemo(() => {
+    const groups = new Map<string, ChatMessage[]>();
+    for (const message of messages) {
+      const group = groups.get(message.slotId);
+      if (group) group.push(message);
+      else groups.set(message.slotId, [message]);
     }
-  };
+    return groups;
+  }, [messages]);
 
-  const handleSlashSelect = (cmd: SlashCommand) => {
-    setInputText(cmd.template);
-    setShowSlashMenu(false);
-  };
+  const handleCloseModel = useCallback(() => setSelectedSlotForModel(null), []);
+  const handleSelectModel = useCallback(
+    async (providerId: string, modelId: string) => {
+      if (selectedSlotForModel) {
+        await onChangeProvider(selectedSlotForModel.slotId, providerId, modelId);
+      }
+    },
+    [onChangeProvider, selectedSlotForModel],
+  );
 
-  const stageImages = async (files: File[], unnamedPrefix: string) => {
-    const added = await readImageAttachments(files, unnamedPrefix, stagedAttachments.length);
-    if (added.length > 0) setStagedAttachments((prev) => [...prev, ...added]);
-  };
-
-  // Web clipboard paste listener for images
-  const handlePaste = (e: PasteEventLike) => {
-    stageImages(imageFilesFromPaste(e), "Pasted Image");
-  };
-
-  // File upload trigger
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    stageImages(files, "Image");
-  };
-
-  const handleSend = async () => {
-    if ((!inputText.trim() && stagedAttachments.length === 0) || !targetSlotId || sending) return;
-    const prompt = inputText.trim();
-    const attachments = stagedAttachments.length > 0 ? [...stagedAttachments] : undefined;
-
-    setInputText("");
-    setStagedAttachments([]);
-    setShowSlashMenu(false);
-    setSending(true);
-
-    try {
-      await onSendPrompt(targetSlotId, prompt, attachments);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleQuickPrompt = (prompt: string) => {
-    setInputText(prompt);
-  };
-
-  const handleKeyPress = (e: NativeSyntheticEvent<WebKeyPressData>) => {
-    if (!isSubmitKeyPress(e)) return;
-    e.preventDefault();
-    handleSend();
-  };
+  const placeholder = `Send message or type / for commands, paste image (Ctrl+V) to @${targetSlot?.name || "Agent"}...`;
 
   return (
     <View style={styles.outerContainer}>
-      {/* Hidden file input for web attachment */}
-      {typeof document !== "undefined" && (
-        <input
-          type="file"
-          accept="image/*"
-          multiple
-          ref={fileInputRef}
-          style={{ display: "none" }}
-          onChange={handleFileChange}
-        />
-      )}
-
       {/* Model & Provider Selector Modal */}
       <ModelSelectorModal
         visible={selectedSlotForModel !== null}
         slot={selectedSlotForModel}
         providers={providers}
         theme={theme}
-        onClose={() => setSelectedSlotForModel(null)}
-        onSelect={async (pId, mId) => {
-          if (selectedSlotForModel) {
-            await onChangeProvider(selectedSlotForModel.slotId, pId, mId);
-          }
-        }}
+        onClose={handleCloseModel}
+        onSelect={handleSelectModel}
       />
 
       <ScrollView horizontal style={styles.container} contentContainerStyle={styles.slotsWrapper}>
-        {team.slots.map((slot) => {
-          const color = getSlotColor(slot.colorIndex);
-          const isActive = targetSlotId === slot.slotId;
-          const slotMessages = messages.filter((m) => m.slotId === slot.slotId);
-
-          return (
-            <View
-              key={slot.slotId}
-              style={[
-                styles.slotColumn,
-                {
-                  backgroundColor: theme.colors.surface2,
-                  borderColor: isActive ? color.primary : theme.colors.border,
-                  borderWidth: isActive ? 2 : 1,
-                },
-              ]}
-            >
-              {/* Slot Header */}
-              <View
-                style={[
-                  styles.slotHeader,
-                  {
-                    backgroundColor: color.badgeBg,
-                    borderBottomColor: theme.colors.border,
-                  },
-                ]}
-              >
-                <Pressable onPress={() => onSelectSlot(slot.slotId)} style={styles.headerTitleRow}>
-                  <Text style={[styles.roleEmoji]}>{slot.role === "leader" ? "👑" : "🤖"}</Text>
-                  <View>
-                    <Text style={[styles.slotName, { color: color.text }]}>{slot.name}</Text>
-                    {slot.model && (
-                      <Text style={[styles.modelSubtitle, { color: color.text }]} numberOfLines={1}>
-                        {slot.model}
-                      </Text>
-                    )}
-                  </View>
-                </Pressable>
-
-                {/* Provider switcher button */}
-                <View style={styles.metaRow}>
-                  <Pressable
-                    onPress={() => setSelectedSlotForModel(slot)}
-                    style={[
-                      styles.providerBadgeBtn,
-                      {
-                        backgroundColor: theme.colors.surface1,
-                        borderColor: theme.colors.border,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.providerBadgeText, { color: theme.colors.foreground }]}>
-                      ⚡ {slot.provider} {slot.model ? `(${slot.model})` : ""} ▾
-                    </Text>
-                  </Pressable>
-
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      {
-                        backgroundColor: STATUS_COLORS[slot.status] ?? "#10b981",
-                      },
-                    ]}
-                  />
-                </View>
-              </View>
-
-              {/* Slot Subheader Role / Instruction */}
-              <View
-                style={[
-                  styles.subHeader,
-                  {
-                    borderBottomColor: theme.colors.border,
-                    backgroundColor: theme.colors.surface1,
-                  },
-                ]}
-              >
-                <Text style={[styles.roleTag, { color: theme.colors.foregroundMuted }]}>
-                  {slot.role === "leader" ? "👑 ORCHESTRATOR" : "🤖 TEAMMATE SLOT"}
-                </Text>
-                <Text
-                  style={[styles.instructionText, { color: theme.colors.foreground }]}
-                  numberOfLines={2}
-                >
-                  {slot.instruction ||
-                    (slot.role === "leader"
-                      ? "Receives user goals, decomposes tasks, and delegates to teammates."
-                      : "Ready to execute assigned tasks in parallel.")}
-                </Text>
-              </View>
-
-              {/* Chat Timeline */}
-              <ScrollView
-                style={styles.chatTimeline}
-                contentContainerStyle={styles.timelineContent}
-              >
-                {slotMessages.length === 0 ? (
-                  <View style={styles.emptyTimeline}>
-                    <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                      No messages yet. Send a prompt below or paste an image to start coworking!
-                    </Text>
-                  </View>
-                ) : (
-                  slotMessages.map((msg) => {
-                    const isUser = msg.sender === "user";
-                    const isSystem = msg.sender === "system";
-
-                    let bubbleStyle: StyleProp<ViewStyle>;
-                    let senderColor: string;
-                    let senderLabel: string;
-                    if (isUser) {
-                      bubbleStyle = [styles.userBubble, { backgroundColor: "#6366f1" }];
-                      senderColor = "#fff";
-                      senderLabel = "You";
-                    } else if (isSystem) {
-                      bubbleStyle = [
-                        styles.systemBubble,
-                        {
-                          backgroundColor: theme.colors.surface1,
-                          borderColor: theme.colors.border,
-                        },
-                      ];
-                      senderColor = theme.colors.foregroundMuted;
-                      senderLabel = "System";
-                    } else {
-                      bubbleStyle = [
-                        styles.agentBubble,
-                        {
-                          backgroundColor: theme.colors.surface1,
-                          borderLeftColor: color.primary,
-                          borderColor: theme.colors.border,
-                        },
-                      ];
-                      senderColor = color.text;
-                      senderLabel = slot.name;
-                    }
-
-                    return (
-                      <View key={msg.id} style={[styles.messageBubble, bubbleStyle]}>
-                        <View style={styles.messageHeader}>
-                          <Text style={[styles.messageSender, { color: senderColor }]}>
-                            {senderLabel}
-                          </Text>
-                          <Text
-                            style={[
-                              styles.messageTime,
-                              {
-                                color: isUser
-                                  ? "rgba(255,255,255,0.7)"
-                                  : theme.colors.foregroundMuted,
-                              },
-                            ]}
-                          >
-                            {new Date(msg.timestamp).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </Text>
-                        </View>
-
-                        {/* Image Attachments in Message */}
-                        {msg.attachments && msg.attachments.length > 0 && (
-                          <MessageAttachments attachments={msg.attachments} />
-                        )}
-
-                        {msg.content ? (
-                          <Text
-                            style={[
-                              styles.messageText,
-                              { color: isUser ? "#fff" : theme.colors.foreground },
-                            ]}
-                          >
-                            {msg.content}
-                          </Text>
-                        ) : null}
-                      </View>
-                    );
-                  })
-                )}
-              </ScrollView>
-
-              {/* Slot Footer Focus indicator */}
-              <Pressable
-                onPress={() => onSelectSlot(slot.slotId)}
-                style={[
-                  styles.slotFooter,
-                  {
-                    borderTopColor: theme.colors.border,
-                    backgroundColor: isActive ? color.badgeBg : theme.colors.surface1,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.footerText,
-                    { color: isActive ? color.text : theme.colors.foregroundMuted },
-                  ]}
-                >
-                  {isActive ? `● Active Target (${slot.name})` : "Click to Focus"}
-                </Text>
-              </Pressable>
-            </View>
-          );
-        })}
+        {team.slots.map((slot) => (
+          <SlotColumn
+            key={slot.slotId}
+            slot={slot}
+            active={targetSlotId === slot.slotId}
+            messages={messagesBySlot.get(slot.slotId) ?? NO_MESSAGES}
+            theme={theme}
+            onSelectSlot={onSelectSlot}
+            onOpenModel={setSelectedSlotForModel}
+          />
+        ))}
       </ScrollView>
 
-      {/* Modern Composer Bar with Slash Commands, Attachments, and Target Switcher */}
-      <View
-        style={[
-          styles.composerContainer,
-          {
-            backgroundColor: theme.colors.surface1,
-            borderTopColor: theme.colors.border,
-          },
-        ]}
+      {/* Composer with Slash Commands, Attachments, and Target Switcher */}
+      <ChatComposer
+        theme={theme}
+        density="compact"
+        targetSlotId={targetSlotId}
+        placeholder={placeholder}
+        quickPrompts={QUICK_PROMPTS}
+        value={inputText}
+        onChangeText={setInputText}
+        onSendPrompt={onSendPrompt}
       >
-        {/* Floating Slash Command Menu */}
-        {showSlashMenu && (
-          <SlashCommandMenu
-            query={inputText}
-            theme={theme}
-            onSelect={handleSlashSelect}
-            onClose={() => setShowSlashMenu(false)}
-          />
-        )}
-
-        {/* Target Agent Selector Chips & Quick Action Pills */}
-        <View style={styles.targetBar}>
-          <View style={styles.targetChips}>
-            <Text style={[styles.targetLabel, { color: theme.colors.foregroundMuted }]}>
-              Target:
-            </Text>
-            {team.slots.map((s) => {
-              const isTarget = s.slotId === targetSlotId;
-              const sColor = getSlotColor(s.colorIndex);
-              return (
-                <Pressable
-                  key={s.slotId}
-                  onPress={() => onSelectSlot(s.slotId)}
-                  style={[
-                    styles.targetChip,
-                    {
-                      borderColor: isTarget ? sColor.primary : theme.colors.border,
-                      backgroundColor: isTarget ? sColor.badgeBg : theme.colors.surface2,
-                    },
-                  ]}
-                >
-                  <Text style={styles.targetChipEmoji}>{s.role === "leader" ? "👑" : "🤖"}</Text>
-                  <Text
-                    style={[
-                      styles.targetChipText,
-                      { color: isTarget ? sColor.text : theme.colors.foregroundMuted },
-                    ]}
-                  >
-                    {s.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {/* Quick Prompts */}
-          <View style={styles.quickPromptsRow}>
-            <Pressable
-              onPress={() =>
-                handleQuickPrompt(
-                  "/plan Phân tích yêu cầu và lập kế hoạch triển khai chi tiết cho team",
-                )
-              }
-              style={[
-                styles.quickPromptPill,
-                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-              ]}
-            >
-              <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
-                🏗️ /plan
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => handleQuickPrompt("/review Kiểm tra chất lượng mã nguồn và bảo mật")}
-              style={[
-                styles.quickPromptPill,
-                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-              ]}
-            >
-              <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
-                🔍 /review
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => handleQuickPrompt("/test Viết unit test và kiểm tra regression")}
-              style={[
-                styles.quickPromptPill,
-                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-              ]}
-            >
-              <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
-                ⚡ /test
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => handleQuickPrompt("/status")}
-              style={[
-                styles.quickPromptPill,
-                { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-              ]}
-            >
-              <Text style={[styles.quickPromptText, { color: theme.colors.foreground }]}>
-                📊 /status
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-
-        {/* Staged Image Attachment Strip */}
-        <ImageAttachmentBar
-          attachments={stagedAttachments}
+        <TargetChips
+          slots={team.slots}
+          targetSlotId={targetSlotId}
           theme={theme}
-          onRemove={(id) => setStagedAttachments((prev) => prev.filter((a) => a.id !== id))}
+          onSelect={onSelectSlot}
         />
+      </ChatComposer>
+    </View>
+  );
+}
 
-        {/* Input box and Action buttons */}
-        <View style={styles.inputRow}>
-          {/* Attachment Button */}
-          <Pressable
-            style={[
-              styles.attachBtn,
-              {
-                backgroundColor: theme.colors.surface2,
-                borderColor: theme.colors.border,
-              },
-            ]}
-            onPress={() => {
-              if (fileInputRef.current) {
-                fileInputRef.current.click();
-              }
-            }}
-            accessibilityLabel="Attach Image"
-          >
-            <Text style={{ fontSize: 16 }}>📎</Text>
-          </Pressable>
+interface TargetChipsProps {
+  slots: TeamSlot[];
+  targetSlotId: string;
+  theme: Theme;
+  onSelect: (slotId: string) => void;
+}
 
-          <View
-            style={[
-              styles.inputWrapper,
-              {
-                borderColor: "#6366f1",
-                backgroundColor: theme.colors.surface2,
-              },
-            ]}
-            // @ts-ignore - web paste event
-            onPaste={handlePaste}
-          >
-            <TextInput
-              style={[
-                styles.composerInput,
-                {
-                  color: theme.colors.foreground,
-                },
-              ]}
-              multiline
-              placeholder={`Send message or type / for commands, paste image (Ctrl+V) to @${targetSlot?.name || "Agent"}...`}
-              placeholderTextColor={theme.colors.foregroundMuted}
-              value={inputText}
-              onChangeText={handleInputChange}
-              onKeyPress={handleKeyPress}
-            />
+function TargetChips({ slots, targetSlotId, theme, onSelect }: TargetChipsProps) {
+  const labelStyle = useMemo(
+    () => StyleSheet.flatten([styles.targetLabel, { color: theme.colors.foregroundMuted }]),
+    [theme.colors.foregroundMuted],
+  );
+
+  return (
+    <View style={styles.targetChips}>
+      <Text style={labelStyle}>Target:</Text>
+      {slots.map((s) => (
+        <TargetChip
+          key={s.slotId}
+          slot={s}
+          selected={s.slotId === targetSlotId}
+          theme={theme}
+          onSelect={onSelect}
+        />
+      ))}
+    </View>
+  );
+}
+
+interface TargetChipProps {
+  slot: TeamSlot;
+  selected: boolean;
+  theme: Theme;
+  onSelect: (slotId: string) => void;
+}
+
+function TargetChip({ slot, selected, theme, onSelect }: TargetChipProps) {
+  const slotColor = getSlotColor(slot.colorIndex);
+  const { border, surface2, foregroundMuted } = theme.colors;
+  const chipStyle = useMemo(
+    () =>
+      StyleSheet.flatten([
+        styles.targetChip,
+        {
+          borderColor: selected ? slotColor.primary : border,
+          backgroundColor: selected ? slotColor.badgeBg : surface2,
+        },
+      ]),
+    [selected, slotColor.primary, slotColor.badgeBg, border, surface2],
+  );
+  const textStyle = useMemo(
+    () =>
+      StyleSheet.flatten([
+        styles.targetChipText,
+        { color: selected ? slotColor.text : foregroundMuted },
+      ]),
+    [selected, slotColor.text, foregroundMuted],
+  );
+  const handlePress = useCallback(() => onSelect(slot.slotId), [onSelect, slot.slotId]);
+
+  return (
+    <Pressable onPress={handlePress} style={chipStyle}>
+      <Text style={styles.targetChipEmoji}>{slot.role === "leader" ? "👑" : "🤖"}</Text>
+      <Text style={textStyle}>{slot.name}</Text>
+    </Pressable>
+  );
+}
+
+interface ColumnStyles {
+  column: ViewStyle;
+  header: ViewStyle;
+  slotName: TextStyle;
+  modelSubtitle: TextStyle;
+  providerBadgeBtn: ViewStyle;
+  providerBadgeText: TextStyle;
+  statusBadge: ViewStyle;
+  subHeader: ViewStyle;
+  roleTag: TextStyle;
+  instructionText: TextStyle;
+  emptyText: TextStyle;
+  bubbleUser: ViewStyle;
+  bubbleSystem: ViewStyle;
+  bubbleAgent: ViewStyle;
+  senderUser: TextStyle;
+  senderSystem: TextStyle;
+  senderAgent: TextStyle;
+  timeUser: TextStyle;
+  timeOther: TextStyle;
+  textUser: TextStyle;
+  textOther: TextStyle;
+  footer: ViewStyle;
+  footerText: TextStyle;
+}
+
+function createColumnStyles(theme: Theme, color: SlotColor, active: boolean, status: string) {
+  const { colors } = theme;
+  const sender = (textColor: string): TextStyle =>
+    StyleSheet.flatten([styles.messageSender, { color: textColor }]);
+
+  const result: ColumnStyles = {
+    column: StyleSheet.flatten([
+      styles.slotColumn,
+      {
+        backgroundColor: colors.surface2,
+        borderColor: active ? color.primary : colors.border,
+        borderWidth: active ? 2 : 1,
+      },
+    ]),
+    header: StyleSheet.flatten([
+      styles.slotHeader,
+      { backgroundColor: color.badgeBg, borderBottomColor: colors.border },
+    ]),
+    slotName: StyleSheet.flatten([styles.slotName, { color: color.text }]),
+    modelSubtitle: StyleSheet.flatten([styles.modelSubtitle, { color: color.text }]),
+    providerBadgeBtn: StyleSheet.flatten([
+      styles.providerBadgeBtn,
+      { backgroundColor: colors.surface1, borderColor: colors.border },
+    ]),
+    providerBadgeText: StyleSheet.flatten([styles.providerBadgeText, { color: colors.foreground }]),
+    statusBadge: StyleSheet.flatten([
+      styles.statusBadge,
+      { backgroundColor: STATUS_COLORS[status] ?? "#10b981" },
+    ]),
+    subHeader: StyleSheet.flatten([
+      styles.subHeader,
+      { borderBottomColor: colors.border, backgroundColor: colors.surface1 },
+    ]),
+    roleTag: StyleSheet.flatten([styles.roleTag, { color: colors.foregroundMuted }]),
+    instructionText: StyleSheet.flatten([styles.instructionText, { color: colors.foreground }]),
+    emptyText: StyleSheet.flatten([styles.emptyText, { color: colors.foregroundMuted }]),
+    bubbleUser: StyleSheet.flatten([
+      styles.messageBubble,
+      styles.userBubble,
+      { backgroundColor: "#6366f1" },
+    ]),
+    bubbleSystem: StyleSheet.flatten([
+      styles.messageBubble,
+      styles.systemBubble,
+      { backgroundColor: colors.surface1, borderColor: colors.border },
+    ]),
+    bubbleAgent: StyleSheet.flatten([
+      styles.messageBubble,
+      styles.agentBubble,
+      {
+        backgroundColor: colors.surface1,
+        borderLeftColor: color.primary,
+        borderColor: colors.border,
+      },
+    ]),
+    senderUser: sender("#fff"),
+    senderSystem: sender(colors.foregroundMuted),
+    senderAgent: sender(color.text),
+    timeUser: StyleSheet.flatten([styles.messageTime, { color: "rgba(255,255,255,0.7)" }]),
+    timeOther: StyleSheet.flatten([styles.messageTime, { color: colors.foregroundMuted }]),
+    textUser: StyleSheet.flatten([styles.messageText, { color: "#fff" }]),
+    textOther: StyleSheet.flatten([styles.messageText, { color: colors.foreground }]),
+    footer: StyleSheet.flatten([
+      styles.slotFooter,
+      {
+        borderTopColor: colors.border,
+        backgroundColor: active ? color.badgeBg : colors.surface1,
+      },
+    ]),
+    footerText: StyleSheet.flatten([
+      styles.footerText,
+      { color: active ? color.text : colors.foregroundMuted },
+    ]),
+  };
+  return result;
+}
+
+interface SlotColumnProps {
+  slot: TeamSlot;
+  active: boolean;
+  messages: ChatMessage[];
+  theme: Theme;
+  onSelectSlot: (slotId: string) => void;
+  onOpenModel: (slot: TeamSlot) => void;
+}
+
+function SlotColumn({ slot, active, messages, theme, onSelectSlot, onOpenModel }: SlotColumnProps) {
+  const color = getSlotColor(slot.colorIndex);
+  const themed = useMemo(
+    () => createColumnStyles(theme, color, active, slot.status),
+    [theme, color, active, slot.status],
+  );
+  const handleSelect = useCallback(() => onSelectSlot(slot.slotId), [onSelectSlot, slot.slotId]);
+  const handleOpenModel = useCallback(() => onOpenModel(slot), [onOpenModel, slot]);
+
+  const isLeader = slot.role === "leader";
+
+  return (
+    <View style={themed.column}>
+      {/* Slot Header */}
+      <View style={themed.header}>
+        <Pressable onPress={handleSelect} style={styles.headerTitleRow}>
+          <Text style={styles.roleEmoji}>{isLeader ? "👑" : "🤖"}</Text>
+          <View>
+            <Text style={themed.slotName}>{slot.name}</Text>
+            {slot.model && (
+              <Text style={themed.modelSubtitle} numberOfLines={1}>
+                {slot.model}
+              </Text>
+            )}
           </View>
+        </Pressable>
 
-          <Pressable
-            style={[
-              styles.sendBtn,
-              (!inputText.trim() && stagedAttachments.length === 0) || sending
-                ? styles.sendBtnDisabled
-                : styles.sendBtnActive,
-            ]}
-            onPress={handleSend}
-            disabled={(!inputText.trim() && stagedAttachments.length === 0) || sending}
-          >
-            <Text style={styles.sendBtnText}>{sending ? "Sending..." : "Send 🚀"}</Text>
+        {/* Provider switcher button */}
+        <View style={styles.metaRow}>
+          <Pressable onPress={handleOpenModel} style={themed.providerBadgeBtn}>
+            <Text style={themed.providerBadgeText}>
+              ⚡ {slot.provider} {slot.model ? `(${slot.model})` : ""} ▾
+            </Text>
           </Pressable>
+
+          <View style={themed.statusBadge} />
         </View>
       </View>
+
+      {/* Slot Subheader Role / Instruction */}
+      <View style={themed.subHeader}>
+        <Text style={themed.roleTag}>{isLeader ? "👑 ORCHESTRATOR" : "🤖 TEAMMATE SLOT"}</Text>
+        <Text style={themed.instructionText} numberOfLines={2}>
+          {slot.instruction ||
+            (isLeader
+              ? "Receives user goals, decomposes tasks, and delegates to teammates."
+              : "Ready to execute assigned tasks in parallel.")}
+        </Text>
+      </View>
+
+      {/* Chat Timeline */}
+      <ScrollView style={styles.chatTimeline} contentContainerStyle={styles.timelineContent}>
+        {messages.length === 0 ? (
+          <View style={styles.emptyTimeline}>
+            <Text style={themed.emptyText}>
+              No messages yet. Send a prompt below or paste an image to start coworking!
+            </Text>
+          </View>
+        ) : (
+          messages.map((msg) => (
+            <MessageBubble key={msg.id} message={msg} slotName={slot.name} themed={themed} />
+          ))
+        )}
+      </ScrollView>
+
+      {/* Slot Footer Focus indicator */}
+      <Pressable onPress={handleSelect} style={themed.footer}>
+        <Text style={themed.footerText}>
+          {active ? `● Active Target (${slot.name})` : "Click to Focus"}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+interface MessageBubbleProps {
+  message: ChatMessage;
+  slotName: string;
+  themed: ColumnStyles;
+}
+
+function MessageBubble({ message, slotName, themed }: MessageBubbleProps) {
+  const isUser = message.sender === "user";
+  const isSystem = message.sender === "system";
+
+  let bubbleStyle = themed.bubbleAgent;
+  let senderStyle = themed.senderAgent;
+  let senderLabel = slotName;
+  if (isUser) {
+    bubbleStyle = themed.bubbleUser;
+    senderStyle = themed.senderUser;
+    senderLabel = "You";
+  } else if (isSystem) {
+    bubbleStyle = themed.bubbleSystem;
+    senderStyle = themed.senderSystem;
+    senderLabel = "System";
+  }
+
+  return (
+    <View style={bubbleStyle}>
+      <View style={styles.messageHeader}>
+        <Text style={senderStyle}>{senderLabel}</Text>
+        <Text style={isUser ? themed.timeUser : themed.timeOther}>
+          {new Date(message.timestamp).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </Text>
+      </View>
+
+      {/* Image Attachments in Message */}
+      {message.attachments && message.attachments.length > 0 && (
+        <MessageAttachments attachments={message.attachments} />
+      )}
+
+      {message.content ? (
+        <Text style={isUser ? themed.textUser : themed.textOther}>{message.content}</Text>
+      ) : null}
     </View>
   );
 }
@@ -543,10 +440,17 @@ function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) 
   return (
     <View style={styles.msgAttachmentsGrid}>
       {attachments.map((att) => (
-        <View key={att.id} style={styles.msgImageWrapper}>
-          <Image source={{ uri: att.dataUrl }} style={styles.msgImage} resizeMode="contain" />
-        </View>
+        <AttachmentImage key={att.id} dataUrl={att.dataUrl} />
       ))}
+    </View>
+  );
+}
+
+function AttachmentImage({ dataUrl }: { dataUrl: string | undefined }) {
+  const source = useMemo(() => ({ uri: dataUrl }), [dataUrl]);
+  return (
+    <View style={styles.msgImageWrapper}>
+      <Image source={source} style={styles.msgImage} resizeMode="contain" />
     </View>
   );
 }
@@ -723,19 +627,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
-  composerContainer: {
-    padding: 10,
-    borderTopWidth: 1,
-    position: "relative",
-  },
-  targetBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-    flexWrap: "wrap",
-    gap: 6,
-  },
   targetChips: {
     flexDirection: "row",
     alignItems: "center",
@@ -760,65 +651,5 @@ const styles = StyleSheet.create({
   targetChipText: {
     fontSize: 11,
     fontWeight: "600",
-  },
-  quickPromptsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  quickPromptPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  quickPromptText: {
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  attachBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  inputWrapper: {
-    flex: 1,
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    minHeight: 38,
-    maxHeight: 120,
-    justifyContent: "center",
-  },
-  composerInput: {
-    fontSize: 13,
-    padding: 0,
-  },
-  sendBtn: {
-    paddingHorizontal: 16,
-    height: 38,
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  sendBtnActive: {
-    backgroundColor: "#6366f1",
-  },
-  sendBtnDisabled: {
-    backgroundColor: "#a5b4fc",
-  },
-  sendBtnText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
   },
 });

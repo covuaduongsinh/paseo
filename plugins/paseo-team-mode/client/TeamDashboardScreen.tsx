@@ -1,5 +1,13 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import {
@@ -13,6 +21,7 @@ import {
   updateSlotProviderRpc,
   type TeamConfig,
   type TeamTask,
+  type ChatAttachment,
   type ChatMessage,
   type ProviderOption,
 } from "../shared/contracts.js";
@@ -23,7 +32,15 @@ import { TeamCreateModal, type NewTeamInput } from "./components/TeamCreateModal
 
 type ViewMode = "parallel" | "single" | "kanban";
 
-export function TeamDashboardScreen({ theme }: PluginSurfaceProps) {
+/** Teams opened from the full screen have no workspace and share this scope. */
+export const GLOBAL_TEAM_SCOPE = "default";
+
+export interface TeamDashboardProps extends PluginSurfaceProps {
+  /** Present in the workspace panel; teams are then scoped to that workspace. */
+  workspaceId?: string;
+}
+
+export function TeamDashboardScreen({ theme, workspaceId }: TeamDashboardProps) {
   const [teams, setTeams] = useState<TeamConfig[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TeamTask[]>([]);
@@ -42,8 +59,8 @@ export function TeamDashboardScreen({ theme }: PluginSurfaceProps) {
   const listProviders = useRpc(listProvidersRpc);
   const updateSlotProvider = useRpc(updateSlotProviderRpc);
 
-  // The host does not pass a project to plugin surfaces, so all teams share one bucket.
-  const currentProjectId = "default";
+  // Stored as `projectId` in team data; the value is the workspace id, or the global scope.
+  const currentProjectId = workspaceId ?? GLOBAL_TEAM_SCOPE;
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -116,22 +133,92 @@ export function TeamDashboardScreen({ theme }: PluginSurfaceProps) {
   const activeSlot =
     selectedTeam?.slots.find((s) => s.slotId === activeSlotId) ?? selectedTeam?.slots[0];
 
+  const themed = useMemo(() => createDashboardStyles(theme), [theme]);
+
+  const handleShowCreate = useCallback(() => setShowCreateModal(true), []);
+  const handleCloseCreate = useCallback(() => setShowCreateModal(false), []);
+
+  const handleSelectTeam = useCallback((team: TeamConfig) => {
+    setSelectedTeamId(team.id);
+    setActiveSlotId(team.slots[0]?.slotId);
+  }, []);
+
+  const handleCreateTeam = useCallback(
+    async (params: NewTeamInput) => {
+      try {
+        const res = await createTeam({
+          projectId: currentProjectId,
+          ...params,
+        });
+        await fetchTeams();
+        setSelectedTeamId(res.team.id);
+        setActiveSlotId(res.team.slots[0]?.slotId);
+      } catch (e) {
+        console.error("Failed to create team:", e);
+      }
+    },
+    [createTeam, currentProjectId, fetchTeams],
+  );
+
+  const handleDeleteSelectedTeam = useCallback(async () => {
+    if (!selectedTeamId) return;
+    try {
+      await deleteTeam({ teamId: selectedTeamId });
+      await fetchTeams();
+      setSelectedTeamId(null);
+    } catch (e) {
+      console.error("Failed to delete team:", e);
+    }
+  }, [deleteTeam, fetchTeams, selectedTeamId]);
+
+  const handleSendPrompt = useCallback(
+    async (slotId: string, prompt: string, attachments?: ChatAttachment[]) => {
+      if (!selectedTeamId) return;
+      try {
+        await sendPrompt({
+          teamId: selectedTeamId,
+          slotId,
+          prompt,
+          attachments,
+        });
+        await fetchMessages(selectedTeamId);
+        await fetchTasks(selectedTeamId);
+      } catch (e) {
+        console.error("Failed to send prompt:", e);
+      }
+    },
+    [fetchMessages, fetchTasks, selectedTeamId, sendPrompt],
+  );
+
+  const handleChangeProvider = useCallback(
+    async (slotId: string, provider: string, model?: string) => {
+      if (!selectedTeamId) return;
+      try {
+        const res = await updateSlotProvider({
+          teamId: selectedTeamId,
+          slotId,
+          provider,
+          model,
+        });
+        setTeams((prev) => prev.map((t) => (t.id === selectedTeamId ? res.team : t)));
+      } catch (e) {
+        console.error("Failed to update slot provider:", e);
+      }
+    },
+    [selectedTeamId, updateSlotProvider],
+  );
+
   const renderWorkArea = () => {
     if (!selectedTeam) {
       return (
         <View style={styles.emptyContainer}>
-          <Text style={[styles.emptyTitle, { color: theme.colors.foreground }]}>
-            No Team Configured
-          </Text>
-          <Text style={[styles.emptySubtitle, { color: theme.colors.foregroundMuted }]}>
+          <Text style={themed.emptyTitle}>No Team Configured</Text>
+          <Text style={themed.emptySubtitle}>
             Create a multi-agent team to enable Leader orchestration, parallel teammates, and task
             boards.
           </Text>
-          <Pressable
-            onPress={() => setShowCreateModal(true)}
-            style={[styles.actionBtn, styles.primaryBtn]}
-          >
-            <Text style={{ color: "#ffffff", fontWeight: "bold" }}>+ Create Your First Team</Text>
+          <Pressable onPress={handleShowCreate} style={EMPTY_ACTION_STYLE}>
+            <Text style={styles.primaryBtnText}>+ Create Your First Team</Text>
           </Pressable>
         </View>
       );
@@ -167,189 +254,55 @@ export function TeamDashboardScreen({ theme }: PluginSurfaceProps) {
     return <KanbanBoard tasks={tasks} slots={selectedTeam.slots} theme={theme} />;
   };
 
-  const handleCreateTeam = async (params: NewTeamInput) => {
-    try {
-      const res = await createTeam({
-        projectId: currentProjectId,
-        ...params,
-      });
-      await fetchTeams();
-      setSelectedTeamId(res.team.id);
-      setActiveSlotId(res.team.slots[0]?.slotId);
-    } catch (e) {
-      console.error("Failed to create team:", e);
-    }
-  };
-
-  const handleDeleteTeam = async (teamId: string) => {
-    try {
-      await deleteTeam({ teamId });
-      await fetchTeams();
-      if (selectedTeamId === teamId) {
-        setSelectedTeamId(null);
-      }
-    } catch (e) {
-      console.error("Failed to delete team:", e);
-    }
-  };
-
-  const handleSendPrompt = async (
-    slotId: string,
-    prompt: string,
-    attachments?: import("../shared/contracts.js").ChatAttachment[],
-  ) => {
-    if (!selectedTeamId) return;
-    try {
-      await sendPrompt({
-        teamId: selectedTeamId,
-        slotId,
-        prompt,
-        attachments,
-      });
-      await fetchMessages(selectedTeamId);
-      await fetchTasks(selectedTeamId);
-    } catch (e) {
-      console.error("Failed to send prompt:", e);
-    }
-  };
-
-  const handleChangeProvider = async (slotId: string, provider: string, model?: string) => {
-    if (!selectedTeamId) return;
-    try {
-      const res = await updateSlotProvider({
-        teamId: selectedTeamId,
-        slotId,
-        provider,
-        model,
-      });
-      setTeams((prev) => prev.map((t) => (t.id === selectedTeamId ? res.team : t)));
-    } catch (e) {
-      console.error("Failed to update slot provider:", e);
-    }
-  };
-
   return (
-    <View style={[styles.screen, { backgroundColor: theme.colors.surface0 }]}>
+    <View style={themed.screen}>
       {/* Top Header Bar */}
-      <View
-        style={[
-          styles.headerBar,
-          {
-            backgroundColor: theme.colors.surface1,
-            borderBottomColor: theme.colors.border,
-          },
-        ]}
-      >
+      <View style={themed.headerBar}>
         <View style={styles.teamSelectorArea}>
-          <Text style={[styles.screenTitle, { color: theme.colors.foreground }]}>👥 Teams</Text>
+          <Text style={themed.screenTitle}>👥 Teams</Text>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.teamsList}>
-            {teams.map((t) => {
-              const isSelected = t.id === selectedTeamId;
-              return (
-                <Pressable
-                  key={t.id}
-                  onPress={() => {
-                    setSelectedTeamId(t.id);
-                    setActiveSlotId(t.slots[0]?.slotId);
-                  }}
-                  style={[
-                    styles.teamPill,
-                    {
-                      backgroundColor: isSelected
-                        ? "rgba(99, 102, 241, 0.15)"
-                        : theme.colors.surface2,
-                      borderColor: isSelected ? "#6366f1" : theme.colors.border,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.teamPillText,
-                      { color: isSelected ? "#818cf8" : theme.colors.foreground },
-                    ]}
-                  >
-                    {t.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
+            {teams.map((t) => (
+              <TeamPill
+                key={t.id}
+                team={t}
+                selected={t.id === selectedTeamId}
+                themed={themed}
+                onSelect={handleSelectTeam}
+              />
+            ))}
           </ScrollView>
 
-          <Pressable
-            onPress={() => setShowCreateModal(true)}
-            style={[styles.newTeamBtn, { borderColor: "#6366f1" }]}
-          >
+          <Pressable onPress={handleShowCreate} style={styles.newTeamBtn}>
             <Text style={styles.newTeamBtnText}>+ New Team</Text>
           </Pressable>
         </View>
 
         {selectedTeam ? (
           <View style={styles.viewToggleArea}>
-            <Pressable
-              onPress={() => setViewMode("parallel")}
-              style={[
-                styles.toggleBtn,
-                viewMode === "parallel" && styles.toggleBtnActive,
-                { borderColor: theme.colors.border },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleBtnText,
-                  {
-                    color: viewMode === "parallel" ? "#6366f1" : theme.colors.foregroundMuted,
-                  },
-                ]}
-              >
-                Parallel Chat
-              </Text>
-            </Pressable>
+            <ViewToggle
+              mode="parallel"
+              label="Parallel Chat"
+              activeMode={viewMode}
+              themed={themed}
+              onSelect={setViewMode}
+            />
+            <ViewToggle
+              mode="single"
+              label={`Single Focus (${activeSlot?.name ?? "Agent"})`}
+              activeMode={viewMode}
+              themed={themed}
+              onSelect={setViewMode}
+            />
+            <ViewToggle
+              mode="kanban"
+              label={`Activity Kanban (${tasks.length})`}
+              activeMode={viewMode}
+              themed={themed}
+              onSelect={setViewMode}
+            />
 
-            <Pressable
-              onPress={() => setViewMode("single")}
-              style={[
-                styles.toggleBtn,
-                viewMode === "single" && styles.toggleBtnActive,
-                { borderColor: theme.colors.border },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleBtnText,
-                  {
-                    color: viewMode === "single" ? "#6366f1" : theme.colors.foregroundMuted,
-                  },
-                ]}
-              >
-                Single Focus ({activeSlot?.name ?? "Agent"})
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setViewMode("kanban")}
-              style={[
-                styles.toggleBtn,
-                viewMode === "kanban" && styles.toggleBtnActive,
-                { borderColor: theme.colors.border },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleBtnText,
-                  {
-                    color: viewMode === "kanban" ? "#6366f1" : theme.colors.foregroundMuted,
-                  },
-                ]}
-              >
-                Activity Kanban ({tasks.length})
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => handleDeleteTeam(selectedTeam.id)}
-              style={styles.deleteTeamBtn}
-            >
+            <Pressable onPress={handleDeleteSelectedTeam} style={styles.deleteTeamBtn}>
               <Text style={styles.deleteTeamText}>Delete</Text>
             </Pressable>
           </View>
@@ -363,11 +316,106 @@ export function TeamDashboardScreen({ theme }: PluginSurfaceProps) {
         <TeamCreateModal
           visible={showCreateModal}
           theme={theme}
-          onClose={() => setShowCreateModal(false)}
+          onClose={handleCloseCreate}
           onCreate={handleCreateTeam}
         />
       )}
     </View>
+  );
+}
+
+interface DashboardStyles {
+  screen: ViewStyle;
+  headerBar: ViewStyle;
+  screenTitle: TextStyle;
+  emptyTitle: TextStyle;
+  emptySubtitle: TextStyle;
+  teamPillOn: ViewStyle;
+  teamPillOff: ViewStyle;
+  teamPillTextOn: TextStyle;
+  teamPillTextOff: TextStyle;
+  toggleOn: ViewStyle;
+  toggleOff: ViewStyle;
+  toggleTextOn: TextStyle;
+  toggleTextOff: TextStyle;
+}
+
+function createDashboardStyles(theme: PluginSurfaceProps["theme"]): DashboardStyles {
+  const { colors } = theme;
+  const pill = (selected: boolean): ViewStyle =>
+    StyleSheet.flatten([
+      styles.teamPill,
+      {
+        backgroundColor: selected ? "rgba(99, 102, 241, 0.15)" : colors.surface2,
+        borderColor: selected ? "#6366f1" : colors.border,
+      },
+    ]);
+  const pillText = (selected: boolean): TextStyle =>
+    StyleSheet.flatten([styles.teamPillText, { color: selected ? "#818cf8" : colors.foreground }]);
+  // The border color comes last on purpose: the active toggle keeps the theme border.
+  const toggle = (active: boolean): ViewStyle =>
+    StyleSheet.flatten([
+      styles.toggleBtn,
+      active && styles.toggleBtnActive,
+      { borderColor: colors.border },
+    ]);
+  const toggleText = (active: boolean): TextStyle =>
+    StyleSheet.flatten([
+      styles.toggleBtnText,
+      { color: active ? "#6366f1" : colors.foregroundMuted },
+    ]);
+
+  return {
+    screen: StyleSheet.flatten([styles.screen, { backgroundColor: colors.surface0 }]),
+    headerBar: StyleSheet.flatten([
+      styles.headerBar,
+      { backgroundColor: colors.surface1, borderBottomColor: colors.border },
+    ]),
+    screenTitle: StyleSheet.flatten([styles.screenTitle, { color: colors.foreground }]),
+    emptyTitle: StyleSheet.flatten([styles.emptyTitle, { color: colors.foreground }]),
+    emptySubtitle: StyleSheet.flatten([styles.emptySubtitle, { color: colors.foregroundMuted }]),
+    teamPillOn: pill(true),
+    teamPillOff: pill(false),
+    teamPillTextOn: pillText(true),
+    teamPillTextOff: pillText(false),
+    toggleOn: toggle(true),
+    toggleOff: toggle(false),
+    toggleTextOn: toggleText(true),
+    toggleTextOff: toggleText(false),
+  };
+}
+
+interface TeamPillProps {
+  team: TeamConfig;
+  selected: boolean;
+  themed: DashboardStyles;
+  onSelect: (team: TeamConfig) => void;
+}
+
+function TeamPill({ team, selected, themed, onSelect }: TeamPillProps) {
+  const handlePress = useCallback(() => onSelect(team), [onSelect, team]);
+  return (
+    <Pressable onPress={handlePress} style={selected ? themed.teamPillOn : themed.teamPillOff}>
+      <Text style={selected ? themed.teamPillTextOn : themed.teamPillTextOff}>{team.name}</Text>
+    </Pressable>
+  );
+}
+
+interface ViewToggleProps {
+  mode: ViewMode;
+  label: string;
+  activeMode: ViewMode;
+  themed: DashboardStyles;
+  onSelect: (mode: ViewMode) => void;
+}
+
+function ViewToggle({ mode, label, activeMode, themed, onSelect }: ViewToggleProps) {
+  const active = mode === activeMode;
+  const handlePress = useCallback(() => onSelect(mode), [onSelect, mode]);
+  return (
+    <Pressable onPress={handlePress} style={active ? themed.toggleOn : themed.toggleOff}>
+      <Text style={active ? themed.toggleTextOn : themed.toggleTextOff}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -414,6 +462,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderStyle: "dashed",
+    borderColor: "#6366f1",
   },
   newTeamBtnText: {
     fontSize: 12,
@@ -476,4 +525,10 @@ const styles = StyleSheet.create({
   primaryBtn: {
     backgroundColor: "#6366f1",
   },
+  primaryBtnText: {
+    color: "#ffffff",
+    fontWeight: "bold",
+  },
 });
+
+const EMPTY_ACTION_STYLE = StyleSheet.flatten([styles.actionBtn, styles.primaryBtn]);

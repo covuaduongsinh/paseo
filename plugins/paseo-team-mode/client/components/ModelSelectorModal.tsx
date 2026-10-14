@@ -1,5 +1,14 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, TextInput } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ScrollView,
+  TextInput,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { ProviderOption, TeamSlot } from "../../shared/contracts.js";
 import { FIXED_POSITION } from "../theme/overlay.js";
@@ -30,6 +39,92 @@ interface ModelSelectorModalContentProps extends ModelSelectorModalProps {
   slot: TeamSlot;
 }
 
+const ACCENT = "#6366f1";
+const ACCENT_SOFT = "rgba(99, 102, 241, 0.08)";
+
+interface ModalStyles {
+  modalContainer: ViewStyle;
+  header: ViewStyle;
+  title: TextStyle;
+  subtitle: TextStyle;
+  closeIcon: TextStyle;
+  sectionLabel: TextStyle;
+  sectionLabelSpaced: TextStyle;
+  providerCardOn: ViewStyle;
+  providerCardOff: ViewStyle;
+  providerNameOn: TextStyle;
+  providerNameOff: TextStyle;
+  modelCardOn: ViewStyle;
+  modelCardOff: ViewStyle;
+  modelLabelOn: TextStyle;
+  modelLabelOff: TextStyle;
+  modelDesc: TextStyle;
+  emptyModelsText: TextStyle;
+  customCardOn: ViewStyle;
+  customCardOff: ViewStyle;
+  customInput: TextStyle;
+  footer: ViewStyle;
+  cancelBtn: ViewStyle;
+  cancelText: TextStyle;
+}
+
+function createModalStyles(theme: PluginSurfaceProps["theme"]): ModalStyles {
+  const { colors } = theme;
+  const card = (styleBase: ViewStyle, selected: boolean, extra?: ViewStyle): ViewStyle =>
+    StyleSheet.flatten([
+      styleBase,
+      {
+        borderColor: selected ? ACCENT : colors.border,
+        backgroundColor: selected ? ACCENT_SOFT : colors.surface2,
+      },
+      extra,
+    ]);
+  const label = (styleBase: TextStyle, selected: boolean, weight: TextStyle["fontWeight"]) =>
+    StyleSheet.flatten([
+      styleBase,
+      { color: selected ? ACCENT : colors.foreground, fontWeight: selected ? "700" : weight },
+    ]);
+
+  return {
+    modalContainer: StyleSheet.flatten([
+      styles.modalContainer,
+      { backgroundColor: colors.surface1, borderColor: colors.border },
+    ]),
+    header: StyleSheet.flatten([styles.header, { borderBottomColor: colors.border }]),
+    title: StyleSheet.flatten([styles.title, { color: colors.foreground }]),
+    subtitle: StyleSheet.flatten([styles.subtitle, { color: colors.foregroundMuted }]),
+    closeIcon: StyleSheet.flatten([styles.closeIcon, { color: colors.foregroundMuted }]),
+    sectionLabel: StyleSheet.flatten([styles.sectionLabel, { color: colors.foreground }]),
+    sectionLabelSpaced: StyleSheet.flatten([
+      styles.sectionLabel,
+      { color: colors.foreground, marginTop: 16 },
+    ]),
+    providerCardOn: card(styles.providerCard, true),
+    providerCardOff: card(styles.providerCard, false),
+    providerNameOn: label(styles.providerName, true, "500"),
+    providerNameOff: label(styles.providerName, false, "500"),
+    modelCardOn: card(styles.modelCard, true),
+    modelCardOff: card(styles.modelCard, false),
+    modelLabelOn: label(styles.modelLabel, true, "600"),
+    modelLabelOff: label(styles.modelLabel, false, "600"),
+    modelDesc: StyleSheet.flatten([styles.modelDesc, { color: colors.foregroundMuted }]),
+    emptyModelsText: { color: colors.foregroundMuted },
+    customCardOn: card(styles.modelCard, true, { marginTop: 6 }),
+    customCardOff: card(styles.modelCard, false, { marginTop: 6 }),
+    customInput: StyleSheet.flatten([
+      styles.customInput,
+      {
+        color: colors.foreground,
+        borderColor: colors.border,
+        backgroundColor: colors.surface1,
+      },
+    ]),
+    footer: StyleSheet.flatten([styles.footer, { borderTopColor: colors.border }]),
+    cancelBtn: StyleSheet.flatten([styles.cancelBtn, { borderColor: colors.border }]),
+    cancelText: { color: colors.foregroundMuted, fontWeight: "600" },
+  };
+}
+
 // Hooks live here so they run on every render; the early return above would change their count.
 function ModelSelectorModalContent({
   slot,
@@ -47,138 +142,82 @@ function ModelSelectorModalContent({
   const [customModelId, setCustomModelId] = useState("");
   const [useCustomModel, setUseCustomModel] = useState(false);
 
-  const handleApply = () => {
+  const themed = useMemo(() => createModalStyles(theme), [theme]);
+
+  const handleSelectProvider = useCallback((provider: ProviderOption) => {
+    setSelectedProviderId(provider.id);
+    const firstModel = provider.models[0];
+    if (firstModel) setSelectedModelId(firstModel.id);
+    setUseCustomModel(false);
+  }, []);
+
+  const handleSelectModel = useCallback((modelId: string) => {
+    setSelectedModelId(modelId);
+    setUseCustomModel(false);
+  }, []);
+
+  const handleUseCustomModel = useCallback(() => setUseCustomModel(true), []);
+
+  const handleApply = useCallback(() => {
     const finalModel =
       useCustomModel && customModelId.trim() ? customModelId.trim() : selectedModelId;
     onSelect(selectedProviderId, finalModel);
     onClose();
-  };
+  }, [useCustomModel, customModelId, selectedModelId, selectedProviderId, onSelect, onClose]);
 
   return (
     <View style={styles.backdrop}>
-      <View
-        style={[
-          styles.modalContainer,
-          {
-            backgroundColor: theme.colors.surface1,
-            borderColor: theme.colors.border,
-          },
-        ]}
-      >
+      <View style={themed.modalContainer}>
         {/* Header */}
-        <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <View style={themed.header}>
           <View>
-            <Text style={[styles.title, { color: theme.colors.foreground }]}>
-              Configure Slot Model
-            </Text>
-            <Text style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}>
+            <Text style={themed.title}>Configure Slot Model</Text>
+            <Text style={themed.subtitle}>
               Assign Agent runtime and AI model for {slot.name} ({slot.role})
             </Text>
           </View>
           <Pressable onPress={onClose} style={styles.closeBtn}>
-            <Text style={[styles.closeIcon, { color: theme.colors.foregroundMuted }]}>✕</Text>
+            <Text style={themed.closeIcon}>✕</Text>
           </Pressable>
         </View>
 
         <View style={styles.body}>
           {/* Step 1: Select Provider */}
-          <Text style={[styles.sectionLabel, { color: theme.colors.foreground }]}>
-            1. Select AI Provider / Engine
-          </Text>
+          <Text style={themed.sectionLabel}>1. Select AI Provider / Engine</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.providersRow}
           >
-            {providers.map((p) => {
-              const isSelected = selectedProviderId === p.id;
-              return (
-                <Pressable
-                  key={p.id}
-                  style={[
-                    styles.providerCard,
-                    {
-                      borderColor: isSelected ? "#6366f1" : theme.colors.border,
-                      backgroundColor: isSelected
-                        ? "rgba(99, 102, 241, 0.08)"
-                        : theme.colors.surface2,
-                    },
-                  ]}
-                  onPress={() => {
-                    setSelectedProviderId(p.id);
-                    if (p.models && p.models.length > 0) {
-                      setSelectedModelId(p.models[0]!.id);
-                    }
-                    setUseCustomModel(false);
-                  }}
-                >
-                  <Text style={styles.providerIcon}>{PROVIDER_ICONS[p.id] ?? "🔧"}</Text>
-                  <Text
-                    style={[
-                      styles.providerName,
-                      {
-                        color: isSelected ? "#6366f1" : theme.colors.foreground,
-                        fontWeight: isSelected ? "700" : "500",
-                      },
-                    ]}
-                  >
-                    {p.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
+            {providers.map((p) => (
+              <ProviderCard
+                key={p.id}
+                provider={p}
+                selected={selectedProviderId === p.id}
+                themed={themed}
+                onSelect={handleSelectProvider}
+              />
+            ))}
           </ScrollView>
 
           {/* Step 2: Select Model */}
-          <Text style={[styles.sectionLabel, { color: theme.colors.foreground, marginTop: 16 }]}>
+          <Text style={themed.sectionLabelSpaced}>
             2. Select Model for {selectedProvider?.name ?? selectedProviderId}
           </Text>
           <ScrollView style={styles.modelsList} contentContainerStyle={styles.modelsContainer}>
             {selectedProvider?.models && selectedProvider.models.length > 0 ? (
-              selectedProvider.models.map((m) => {
-                const isSelected = !useCustomModel && selectedModelId === m.id;
-                return (
-                  <Pressable
-                    key={m.id}
-                    style={[
-                      styles.modelCard,
-                      {
-                        borderColor: isSelected ? "#6366f1" : theme.colors.border,
-                        backgroundColor: isSelected
-                          ? "rgba(99, 102, 241, 0.08)"
-                          : theme.colors.surface2,
-                      },
-                    ]}
-                    onPress={() => {
-                      setSelectedModelId(m.id);
-                      setUseCustomModel(false);
-                    }}
-                  >
-                    <View style={styles.modelHeader}>
-                      <Text
-                        style={[
-                          styles.modelLabel,
-                          {
-                            color: isSelected ? "#6366f1" : theme.colors.foreground,
-                            fontWeight: isSelected ? "700" : "600",
-                          },
-                        ]}
-                      >
-                        {m.label}
-                      </Text>
-                      {m.isDefault && <RecommendedBadge />}
-                    </View>
-                    {m.description && (
-                      <Text style={[styles.modelDesc, { color: theme.colors.foregroundMuted }]}>
-                        {m.description}
-                      </Text>
-                    )}
-                  </Pressable>
-                );
-              })
+              selectedProvider.models.map((m) => (
+                <ModelCard
+                  key={m.id}
+                  model={m}
+                  selected={!useCustomModel && selectedModelId === m.id}
+                  themed={themed}
+                  onSelect={handleSelectModel}
+                />
+              ))
             ) : (
               <View style={styles.emptyModels}>
-                <Text style={{ color: theme.colors.foregroundMuted }}>
+                <Text style={themed.emptyModelsText}>
                   Default model configuration will be used.
                 </Text>
               </View>
@@ -186,39 +225,15 @@ function ModelSelectorModalContent({
 
             {/* Custom Model ID Option */}
             <Pressable
-              style={[
-                styles.modelCard,
-                {
-                  borderColor: useCustomModel ? "#6366f1" : theme.colors.border,
-                  backgroundColor: useCustomModel
-                    ? "rgba(99, 102, 241, 0.08)"
-                    : theme.colors.surface2,
-                  marginTop: 6,
-                },
-              ]}
-              onPress={() => setUseCustomModel(true)}
+              style={useCustomModel ? themed.customCardOn : themed.customCardOff}
+              onPress={handleUseCustomModel}
             >
-              <Text
-                style={[
-                  styles.modelLabel,
-                  {
-                    color: useCustomModel ? "#6366f1" : theme.colors.foreground,
-                    fontWeight: useCustomModel ? "700" : "600",
-                  },
-                ]}
-              >
+              <Text style={useCustomModel ? themed.modelLabelOn : themed.modelLabelOff}>
                 ⚙️ Custom Model Identifier
               </Text>
               {useCustomModel && (
                 <TextInput
-                  style={[
-                    styles.customInput,
-                    {
-                      color: theme.colors.foreground,
-                      borderColor: theme.colors.border,
-                      backgroundColor: theme.colors.surface1,
-                    },
-                  ]}
+                  style={themed.customInput}
                   placeholder="e.g. claude-3-7-sonnet-20250219 or deepseek-ai/DeepSeek-R1"
                   placeholderTextColor={theme.colors.foregroundMuted}
                   value={customModelId}
@@ -230,12 +245,9 @@ function ModelSelectorModalContent({
         </View>
 
         {/* Footer */}
-        <View style={[styles.footer, { borderTopColor: theme.colors.border }]}>
-          <Pressable
-            style={[styles.cancelBtn, { borderColor: theme.colors.border }]}
-            onPress={onClose}
-          >
-            <Text style={{ color: theme.colors.foregroundMuted, fontWeight: "600" }}>Cancel</Text>
+        <View style={themed.footer}>
+          <Pressable style={themed.cancelBtn} onPress={onClose}>
+            <Text style={themed.cancelText}>Cancel</Text>
           </Pressable>
           <Pressable style={styles.applyBtn} onPress={handleApply}>
             <Text style={styles.applyBtnText}>Apply Model to {slot.name}</Text>
@@ -243,6 +255,46 @@ function ModelSelectorModalContent({
         </View>
       </View>
     </View>
+  );
+}
+
+interface ProviderCardProps {
+  provider: ProviderOption;
+  selected: boolean;
+  themed: ModalStyles;
+  onSelect: (provider: ProviderOption) => void;
+}
+
+function ProviderCard({ provider, selected, themed, onSelect }: ProviderCardProps) {
+  const handlePress = useCallback(() => onSelect(provider), [onSelect, provider]);
+  return (
+    <Pressable
+      style={selected ? themed.providerCardOn : themed.providerCardOff}
+      onPress={handlePress}
+    >
+      <Text style={styles.providerIcon}>{PROVIDER_ICONS[provider.id] ?? "🔧"}</Text>
+      <Text style={selected ? themed.providerNameOn : themed.providerNameOff}>{provider.name}</Text>
+    </Pressable>
+  );
+}
+
+interface ModelCardProps {
+  model: ProviderOption["models"][number];
+  selected: boolean;
+  themed: ModalStyles;
+  onSelect: (modelId: string) => void;
+}
+
+function ModelCard({ model, selected, themed, onSelect }: ModelCardProps) {
+  const handlePress = useCallback(() => onSelect(model.id), [onSelect, model.id]);
+  return (
+    <Pressable style={selected ? themed.modelCardOn : themed.modelCardOff} onPress={handlePress}>
+      <View style={styles.modelHeader}>
+        <Text style={selected ? themed.modelLabelOn : themed.modelLabelOff}>{model.label}</Text>
+        {model.isDefault && <RecommendedBadge />}
+      </View>
+      {model.description && <Text style={themed.modelDesc}>{model.description}</Text>}
+    </Pressable>
   );
 }
 

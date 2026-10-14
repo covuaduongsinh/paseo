@@ -1,14 +1,12 @@
-import React, { useState, useRef } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   Pressable,
-  TextInput,
   Image,
-  type NativeSyntheticEvent,
-  type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
@@ -20,23 +18,25 @@ import type {
   ChatAttachment,
 } from "../../shared/contracts.js";
 import { getSlotColor } from "../theme/member-colors.js";
-import { SlashCommandMenu, type SlashCommand } from "./SlashCommandMenu.js";
-import { ImageAttachmentBar } from "./ImageAttachmentBar.js";
+import { ChatComposer, type QuickPrompt } from "./ChatComposer.js";
 import { ModelSelectorModal } from "./ModelSelectorModal.js";
-import {
-  imageFilesFromPaste,
-  isSubmitKeyPress,
-  readImageAttachments,
-  type PasteEventLike,
-  type WebKeyPressData,
-} from "../chat-input.js";
+
+type Theme = PluginSurfaceProps["theme"];
+type SlotColor = ReturnType<typeof getSlotColor>;
+
+const QUICK_PROMPTS: readonly QuickPrompt[] = [
+  { label: "🏗️ /plan", prompt: "/plan " },
+  { label: "🔍 /review", prompt: "/review " },
+  { label: "⚡ /test", prompt: "/test " },
+  { label: "📊 /status", prompt: "/status" },
+];
 
 interface SingleChatViewProps {
   team: TeamConfig;
   slot: TeamSlot;
   messages: ChatMessage[];
   providers: ProviderOption[];
-  theme: PluginSurfaceProps["theme"];
+  theme: Theme;
   onSelectSlot: (slotId: string) => void;
   onSendPrompt: (slotId: string, prompt: string, attachments?: ChatAttachment[]) => Promise<void>;
   onChangeProvider: (slotId: string, provider: string, model?: string) => Promise<void>;
@@ -53,127 +53,53 @@ export function SingleChatView({
   onChangeProvider,
 }: SingleChatViewProps) {
   const [inputText, setInputText] = useState("");
-  const [sending, setSending] = useState(false);
-  const [stagedAttachments, setStagedAttachments] = useState<ChatAttachment[]>([]);
-  const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [showModelModal, setShowModelModal] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const color = getSlotColor(slot.colorIndex);
-  const slotMessages = messages.filter((m) => m.slotId === slot.slotId);
+  const slotMessages = useMemo(
+    () => messages.filter((m) => m.slotId === slot.slotId),
+    [messages, slot.slotId],
+  );
+  const themed = useMemo(() => createSingleStyles(theme, color), [theme, color]);
 
-  const handleInputChange = (text: string) => {
-    setInputText(text);
-    if (text.startsWith("/")) {
-      setShowSlashMenu(true);
-    } else {
-      setShowSlashMenu(false);
-    }
-  };
+  const handleOpenModel = useCallback(() => setShowModelModal(true), []);
+  const handleCloseModel = useCallback(() => setShowModelModal(false), []);
+  const handleSelectModel = useCallback(
+    async (providerId: string, modelId: string) => {
+      await onChangeProvider(slot.slotId, providerId, modelId);
+    },
+    [onChangeProvider, slot.slotId],
+  );
 
-  const handleSlashSelect = (cmd: SlashCommand) => {
-    setInputText(cmd.template);
-    setShowSlashMenu(false);
-  };
-
-  const stageImages = async (files: File[], unnamedPrefix: string) => {
-    const added = await readImageAttachments(files, unnamedPrefix, stagedAttachments.length);
-    if (added.length > 0) setStagedAttachments((prev) => [...prev, ...added]);
-  };
-
-  const handlePaste = (e: PasteEventLike) => {
-    stageImages(imageFilesFromPaste(e), "Pasted Image");
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    stageImages(files, "Image");
-  };
-
-  const handleSend = async () => {
-    if ((!inputText.trim() && stagedAttachments.length === 0) || sending) return;
-    const prompt = inputText.trim();
-    const attachments = stagedAttachments.length > 0 ? [...stagedAttachments] : undefined;
-
-    setInputText("");
-    setStagedAttachments([]);
-    setShowSlashMenu(false);
-    setSending(true);
-
-    try {
-      await onSendPrompt(slot.slotId, prompt, attachments);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleQuickPrompt = (text: string) => {
-    setInputText(text);
-  };
-
-  const handleKeyPress = (e: NativeSyntheticEvent<WebKeyPressData>) => {
-    if (!isSubmitKeyPress(e)) return;
-    e.preventDefault();
-    handleSend();
-  };
+  const isLeader = slot.role === "leader";
+  const placeholder = `Send message, type / for commands, paste image (Ctrl+V) to @${slot.name}...`;
 
   return (
     <View style={styles.container}>
-      {/* Hidden file input */}
-      {typeof document !== "undefined" && (
-        <input
-          type="file"
-          accept="image/*"
-          multiple
-          ref={fileInputRef}
-          style={{ display: "none" }}
-          onChange={handleFileChange}
-        />
-      )}
-
       {/* Model Selector Modal */}
       <ModelSelectorModal
         visible={showModelModal}
         slot={slot}
         providers={providers}
         theme={theme}
-        onClose={() => setShowModelModal(false)}
-        onSelect={async (pId, mId) => {
-          await onChangeProvider(slot.slotId, pId, mId);
-        }}
+        onClose={handleCloseModel}
+        onSelect={handleSelectModel}
       />
 
       {/* Header bar of focused agent */}
-      <View
-        style={[
-          styles.header,
-          {
-            backgroundColor: color.badgeBg,
-            borderBottomColor: theme.colors.border,
-          },
-        ]}
-      >
+      <View style={themed.header}>
         <View style={styles.headerLeft}>
-          <Text style={styles.emoji}>{slot.role === "leader" ? "👑" : "🤖"}</Text>
+          <Text style={styles.emoji}>{isLeader ? "👑" : "🤖"}</Text>
           <View>
             <View style={styles.titleRow}>
-              <Text style={[styles.agentName, { color: color.text }]}>{slot.name}</Text>
-              <View
-                style={[
-                  styles.roleBadge,
-                  { backgroundColor: color.primary + "20", borderColor: color.primary },
-                ]}
-              >
-                <Text style={[styles.roleText, { color: color.primary }]}>
-                  {slot.role === "leader" ? "LEADER" : "TEAMMATE"}
-                </Text>
+              <Text style={themed.agentName}>{slot.name}</Text>
+              <View style={themed.roleBadge}>
+                <Text style={themed.roleText}>{isLeader ? "LEADER" : "TEAMMATE"}</Text>
               </View>
             </View>
-            <Text style={[styles.instruction, { color: theme.colors.foregroundMuted }]}>
+            <Text style={themed.instruction}>
               {slot.instruction ||
-                (slot.role === "leader"
+                (isLeader
                   ? "Orchestrating team goals & delegating tasks"
                   : "Executing parallel tasks")}
             </Text>
@@ -182,49 +108,22 @@ export function SingleChatView({
 
         {/* Member tabs to switch focus quickly */}
         <View style={styles.slotSwitcherTabs}>
-          {team.slots.map((s) => {
-            const isCurrent = s.slotId === slot.slotId;
-            const sCol = getSlotColor(s.colorIndex);
-            return (
-              <Pressable
-                key={s.slotId}
-                onPress={() => onSelectSlot(s.slotId)}
-                style={[
-                  styles.switcherTab,
-                  {
-                    borderColor: isCurrent ? sCol.primary : theme.colors.border,
-                    backgroundColor: isCurrent ? sCol.badgeBg : theme.colors.surface1,
-                  },
-                ]}
-              >
-                <Text style={{ fontSize: 12 }}>{s.role === "leader" ? "👑" : "🤖"}</Text>
-                <Text
-                  style={[
-                    styles.switcherTabText,
-                    { color: isCurrent ? sCol.text : theme.colors.foregroundMuted },
-                  ]}
-                >
-                  {s.name}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {team.slots.map((s) => (
+            <SwitcherTab
+              key={s.slotId}
+              slot={s}
+              current={s.slotId === slot.slotId}
+              theme={theme}
+              onSelect={onSelectSlot}
+            />
+          ))}
         </View>
 
         {/* Provider / Model Button */}
         <View style={styles.headerRight}>
-          <Pressable
-            onPress={() => setShowModelModal(true)}
-            style={[
-              styles.providerBtn,
-              {
-                backgroundColor: theme.colors.surface1,
-                borderColor: theme.colors.border,
-              },
-            ]}
-          >
-            <Text style={[styles.providerBtnText, { color: theme.colors.foreground }]}>
-              ⚡ <Text style={{ fontWeight: "bold", color: color.text }}>{slot.provider}</Text>
+          <Pressable onPress={handleOpenModel} style={themed.providerBtn}>
+            <Text style={themed.providerBtnText}>
+              ⚡ <Text style={themed.providerName}>{slot.provider}</Text>
               {slot.model ? ` (${slot.model})` : ""} ▾
             </Text>
           </Pressable>
@@ -232,255 +131,255 @@ export function SingleChatView({
       </View>
 
       {/* Messages Timeline */}
-      <ScrollView
-        style={[styles.chatList, { backgroundColor: theme.colors.surface2 }]}
-        contentContainerStyle={styles.chatContent}
-      >
+      <ScrollView style={themed.chatList} contentContainerStyle={styles.chatContent}>
         {slotMessages.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={{ fontSize: 32 }}>💬</Text>
-            <Text style={[styles.emptyTitle, { color: theme.colors.foreground }]}>
-              Start conversation with {slot.name}
-            </Text>
-            <Text style={[styles.emptySubtitle, { color: theme.colors.foregroundMuted }]}>
-              Send a message, use slash commands (/plan, /review...), or paste images below.
-            </Text>
-
-            <View style={styles.promptCards}>
-              <Pressable
-                onPress={() =>
-                  handleQuickPrompt(
-                    slot.role === "leader"
-                      ? "/plan Phân tích kiến trúc tổng thể và phân rã task cho các thành viên"
-                      : "Hãy thực hiện task được giao và viết unit test chi tiết",
-                  )
-                }
-                style={[
-                  styles.promptCard,
-                  {
-                    backgroundColor: theme.colors.surface1,
-                    borderColor: theme.colors.border,
-                  },
-                ]}
-              >
-                <Text style={[styles.cardTitle, { color: theme.colors.foreground }]}>
-                  {slot.role === "leader" ? "🏗️ /plan Phân rã kiến trúc" : "🚀 Bắt đầu thực thi"}
-                </Text>
-                <Text style={[styles.cardDesc, { color: theme.colors.foregroundMuted }]}>
-                  {slot.role === "leader"
-                    ? "Lập kế hoạch phân bổ công việc cho các slots"
-                    : "Chạy các luồng mã nguồn được phân công"}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
+          <EmptyConversation slot={slot} themed={themed} onQuickPrompt={setInputText} />
         ) : (
-          slotMessages.map((msg) => {
-            const isUser = msg.sender === "user";
-            const isSystem = msg.sender === "system";
-
-            let bubbleStyle: StyleProp<ViewStyle>;
-            let senderColor: string;
-            let senderLabel: string;
-            if (isUser) {
-              bubbleStyle = [styles.userBubble, { backgroundColor: "#6366f1" }];
-              senderColor = "#fff";
-              senderLabel = "You";
-            } else if (isSystem) {
-              bubbleStyle = [
-                styles.systemBubble,
-                { backgroundColor: theme.colors.surface1, borderColor: theme.colors.border },
-              ];
-              senderColor = theme.colors.foregroundMuted;
-              senderLabel = "System";
-            } else {
-              bubbleStyle = [
-                styles.agentBubble,
-                {
-                  backgroundColor: theme.colors.surface1,
-                  borderColor: theme.colors.border,
-                  borderLeftColor: color.primary,
-                },
-              ];
-              senderColor = color.text;
-              senderLabel = slot.name;
-            }
-
-            return (
-              <View
-                key={msg.id}
-                style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}
-              >
-                <View style={[styles.bubble, bubbleStyle]}>
-                  <View style={styles.meta}>
-                    <Text style={[styles.senderName, { color: senderColor }]}>{senderLabel}</Text>
-                    <Text
-                      style={[
-                        styles.time,
-                        { color: isUser ? "rgba(255,255,255,0.7)" : theme.colors.foregroundMuted },
-                      ]}
-                    >
-                      {new Date(msg.timestamp).toLocaleTimeString()}
-                    </Text>
-                  </View>
-
-                  {/* Staged or attached images */}
-                  {msg.attachments && msg.attachments.length > 0 && (
-                    <View style={styles.msgAttachmentsGrid}>
-                      {msg.attachments.map((att) => (
-                        <View key={att.id} style={styles.msgImageWrapper}>
-                          <Image
-                            source={{ uri: att.dataUrl }}
-                            style={styles.msgImage}
-                            resizeMode="contain"
-                          />
-                        </View>
-                      ))}
-                    </View>
-                  )}
-
-                  {msg.content ? (
-                    <Text
-                      style={[styles.content, { color: isUser ? "#fff" : theme.colors.foreground }]}
-                    >
-                      {msg.content}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            );
-          })
+          slotMessages.map((msg) => (
+            <MessageRow key={msg.id} message={msg} slotName={slot.name} themed={themed} />
+          ))
         )}
       </ScrollView>
 
-      {/* Composer Input Footer */}
-      <View
-        style={[
-          styles.composer,
-          {
-            backgroundColor: theme.colors.surface1,
-            borderTopColor: theme.colors.border,
-          },
-        ]}
-      >
-        {/* Floating Slash Command Menu */}
-        {showSlashMenu && (
-          <SlashCommandMenu
-            query={inputText}
-            theme={theme}
-            onSelect={handleSlashSelect}
-            onClose={() => setShowSlashMenu(false)}
-          />
+      <ChatComposer
+        theme={theme}
+        density="regular"
+        targetSlotId={slot.slotId}
+        placeholder={placeholder}
+        quickPrompts={QUICK_PROMPTS}
+        value={inputText}
+        onChangeText={setInputText}
+        onSendPrompt={onSendPrompt}
+      />
+    </View>
+  );
+}
+
+interface SingleStyles {
+  header: ViewStyle;
+  agentName: TextStyle;
+  roleBadge: ViewStyle;
+  roleText: TextStyle;
+  instruction: TextStyle;
+  providerBtn: ViewStyle;
+  providerBtnText: TextStyle;
+  providerName: TextStyle;
+  chatList: ViewStyle;
+  emptyTitle: TextStyle;
+  emptySubtitle: TextStyle;
+  promptCard: ViewStyle;
+  cardTitle: TextStyle;
+  cardDesc: TextStyle;
+  bubbleUser: ViewStyle;
+  bubbleSystem: ViewStyle;
+  bubbleAgent: ViewStyle;
+  senderUser: TextStyle;
+  senderSystem: TextStyle;
+  senderAgent: TextStyle;
+  timeUser: TextStyle;
+  timeOther: TextStyle;
+  contentUser: TextStyle;
+  contentOther: TextStyle;
+}
+
+function createSingleStyles(theme: Theme, color: SlotColor): SingleStyles {
+  const { colors } = theme;
+  const sender = (textColor: string): TextStyle =>
+    StyleSheet.flatten([styles.senderName, { color: textColor }]);
+
+  return {
+    header: StyleSheet.flatten([
+      styles.header,
+      { backgroundColor: color.badgeBg, borderBottomColor: colors.border },
+    ]),
+    agentName: StyleSheet.flatten([styles.agentName, { color: color.text }]),
+    roleBadge: StyleSheet.flatten([
+      styles.roleBadge,
+      { backgroundColor: color.primary + "20", borderColor: color.primary },
+    ]),
+    roleText: StyleSheet.flatten([styles.roleText, { color: color.primary }]),
+    instruction: StyleSheet.flatten([styles.instruction, { color: colors.foregroundMuted }]),
+    providerBtn: StyleSheet.flatten([
+      styles.providerBtn,
+      { backgroundColor: colors.surface1, borderColor: colors.border },
+    ]),
+    providerBtnText: StyleSheet.flatten([styles.providerBtnText, { color: colors.foreground }]),
+    providerName: { fontWeight: "bold", color: color.text },
+    chatList: StyleSheet.flatten([styles.chatList, { backgroundColor: colors.surface2 }]),
+    emptyTitle: StyleSheet.flatten([styles.emptyTitle, { color: colors.foreground }]),
+    emptySubtitle: StyleSheet.flatten([styles.emptySubtitle, { color: colors.foregroundMuted }]),
+    promptCard: StyleSheet.flatten([
+      styles.promptCard,
+      { backgroundColor: colors.surface1, borderColor: colors.border },
+    ]),
+    cardTitle: StyleSheet.flatten([styles.cardTitle, { color: colors.foreground }]),
+    cardDesc: StyleSheet.flatten([styles.cardDesc, { color: colors.foregroundMuted }]),
+    bubbleUser: StyleSheet.flatten([
+      styles.bubble,
+      styles.userBubble,
+      { backgroundColor: "#6366f1" },
+    ]),
+    bubbleSystem: StyleSheet.flatten([
+      styles.bubble,
+      styles.systemBubble,
+      { backgroundColor: colors.surface1, borderColor: colors.border },
+    ]),
+    bubbleAgent: StyleSheet.flatten([
+      styles.bubble,
+      styles.agentBubble,
+      {
+        backgroundColor: colors.surface1,
+        borderColor: colors.border,
+        borderLeftColor: color.primary,
+      },
+    ]),
+    senderUser: sender("#fff"),
+    senderSystem: sender(colors.foregroundMuted),
+    senderAgent: sender(color.text),
+    timeUser: StyleSheet.flatten([styles.time, { color: "rgba(255,255,255,0.7)" }]),
+    timeOther: StyleSheet.flatten([styles.time, { color: colors.foregroundMuted }]),
+    contentUser: StyleSheet.flatten([styles.content, { color: "#fff" }]),
+    contentOther: StyleSheet.flatten([styles.content, { color: colors.foreground }]),
+  };
+}
+
+interface SwitcherTabProps {
+  slot: TeamSlot;
+  current: boolean;
+  theme: Theme;
+  onSelect: (slotId: string) => void;
+}
+
+function SwitcherTab({ slot, current, theme, onSelect }: SwitcherTabProps) {
+  const slotColor = getSlotColor(slot.colorIndex);
+  const { border, surface1, foregroundMuted } = theme.colors;
+  const tabStyle = useMemo(
+    () =>
+      StyleSheet.flatten([
+        styles.switcherTab,
+        {
+          borderColor: current ? slotColor.primary : border,
+          backgroundColor: current ? slotColor.badgeBg : surface1,
+        },
+      ]),
+    [current, slotColor.primary, slotColor.badgeBg, border, surface1],
+  );
+  const textStyle = useMemo(
+    () =>
+      StyleSheet.flatten([
+        styles.switcherTabText,
+        { color: current ? slotColor.text : foregroundMuted },
+      ]),
+    [current, slotColor.text, foregroundMuted],
+  );
+  const handlePress = useCallback(() => onSelect(slot.slotId), [onSelect, slot.slotId]);
+
+  return (
+    <Pressable onPress={handlePress} style={tabStyle}>
+      <Text style={styles.switcherTabEmoji}>{slot.role === "leader" ? "👑" : "🤖"}</Text>
+      <Text style={textStyle}>{slot.name}</Text>
+    </Pressable>
+  );
+}
+
+interface EmptyConversationProps {
+  slot: TeamSlot;
+  themed: SingleStyles;
+  onQuickPrompt: (prompt: string) => void;
+}
+
+function EmptyConversation({ slot, themed, onQuickPrompt }: EmptyConversationProps) {
+  const isLeader = slot.role === "leader";
+  const prompt = isLeader
+    ? "/plan Phân tích kiến trúc tổng thể và phân rã task cho các thành viên"
+    : "Hãy thực hiện task được giao và viết unit test chi tiết";
+  const handlePress = useCallback(() => onQuickPrompt(prompt), [onQuickPrompt, prompt]);
+
+  return (
+    <View style={styles.emptyContainer}>
+      <Text style={styles.emptyEmoji}>💬</Text>
+      <Text style={themed.emptyTitle}>Start conversation with {slot.name}</Text>
+      <Text style={themed.emptySubtitle}>
+        Send a message, use slash commands (/plan, /review...), or paste images below.
+      </Text>
+
+      <View style={styles.promptCards}>
+        <Pressable onPress={handlePress} style={themed.promptCard}>
+          <Text style={themed.cardTitle}>
+            {isLeader ? "🏗️ /plan Phân rã kiến trúc" : "🚀 Bắt đầu thực thi"}
+          </Text>
+          <Text style={themed.cardDesc}>
+            {isLeader
+              ? "Lập kế hoạch phân bổ công việc cho các slots"
+              : "Chạy các luồng mã nguồn được phân công"}
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+interface MessageRowProps {
+  message: ChatMessage;
+  slotName: string;
+  themed: SingleStyles;
+}
+
+function MessageRow({ message, slotName, themed }: MessageRowProps) {
+  const isUser = message.sender === "user";
+  const isSystem = message.sender === "system";
+
+  let bubbleStyle = themed.bubbleAgent;
+  let senderStyle = themed.senderAgent;
+  let senderLabel = slotName;
+  if (isUser) {
+    bubbleStyle = themed.bubbleUser;
+    senderStyle = themed.senderUser;
+    senderLabel = "You";
+  } else if (isSystem) {
+    bubbleStyle = themed.bubbleSystem;
+    senderStyle = themed.senderSystem;
+    senderLabel = "System";
+  }
+
+  return (
+    <View style={isUser ? USER_ROW_STYLE : AGENT_ROW_STYLE}>
+      <View style={bubbleStyle}>
+        <View style={styles.meta}>
+          <Text style={senderStyle}>{senderLabel}</Text>
+          <Text style={isUser ? themed.timeUser : themed.timeOther}>
+            {new Date(message.timestamp).toLocaleTimeString()}
+          </Text>
+        </View>
+
+        {/* Staged or attached images */}
+        {message.attachments && message.attachments.length > 0 && (
+          <MessageAttachments attachments={message.attachments} />
         )}
 
-        {/* Quick prompt pills */}
-        <View style={styles.quickBar}>
-          <Pressable
-            onPress={() => handleQuickPrompt("/plan ")}
-            style={[
-              styles.pill,
-              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-            ]}
-          >
-            <Text style={[styles.pillText, { color: theme.colors.foreground }]}>🏗️ /plan</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => handleQuickPrompt("/review ")}
-            style={[
-              styles.pill,
-              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-            ]}
-          >
-            <Text style={[styles.pillText, { color: theme.colors.foreground }]}>🔍 /review</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => handleQuickPrompt("/test ")}
-            style={[
-              styles.pill,
-              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-            ]}
-          >
-            <Text style={[styles.pillText, { color: theme.colors.foreground }]}>⚡ /test</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => handleQuickPrompt("/status")}
-            style={[
-              styles.pill,
-              { borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-            ]}
-          >
-            <Text style={[styles.pillText, { color: theme.colors.foreground }]}>📊 /status</Text>
-          </Pressable>
-        </View>
-
-        {/* Staged Image Attachment Bar */}
-        <ImageAttachmentBar
-          attachments={stagedAttachments}
-          theme={theme}
-          onRemove={(id) => setStagedAttachments((prev) => prev.filter((a) => a.id !== id))}
-        />
-
-        {/* Input & Send Action */}
-        <View style={styles.inputRow}>
-          <Pressable
-            style={[
-              styles.attachBtn,
-              {
-                backgroundColor: theme.colors.surface2,
-                borderColor: theme.colors.border,
-              },
-            ]}
-            onPress={() => {
-              if (fileInputRef.current) {
-                fileInputRef.current.click();
-              }
-            }}
-            accessibilityLabel="Attach Image"
-          >
-            <Text style={{ fontSize: 16 }}>📎</Text>
-          </Pressable>
-
-          <View
-            style={[
-              styles.inputWrapper,
-              {
-                borderColor: "#6366f1",
-                backgroundColor: theme.colors.surface2,
-              },
-            ]}
-            // @ts-ignore - web paste event
-            onPaste={handlePaste}
-          >
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  color: theme.colors.foreground,
-                },
-              ]}
-              multiline
-              placeholder={`Send message, type / for commands, paste image (Ctrl+V) to @${slot.name}...`}
-              placeholderTextColor={theme.colors.foregroundMuted}
-              value={inputText}
-              onChangeText={handleInputChange}
-              onKeyPress={handleKeyPress}
-            />
-          </View>
-
-          <Pressable
-            style={[
-              styles.sendBtn,
-              (!inputText.trim() && stagedAttachments.length === 0) || sending
-                ? styles.sendBtnDisabled
-                : styles.sendBtnActive,
-            ]}
-            onPress={handleSend}
-            disabled={(!inputText.trim() && stagedAttachments.length === 0) || sending}
-          >
-            <Text style={styles.sendBtnText}>{sending ? "Sending..." : "Send 🚀"}</Text>
-          </Pressable>
-        </View>
+        {message.content ? (
+          <Text style={isUser ? themed.contentUser : themed.contentOther}>{message.content}</Text>
+        ) : null}
       </View>
+    </View>
+  );
+}
+
+function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+  return (
+    <View style={styles.msgAttachmentsGrid}>
+      {attachments.map((att) => (
+        <AttachmentImage key={att.id} dataUrl={att.dataUrl} />
+      ))}
+    </View>
+  );
+}
+
+function AttachmentImage({ dataUrl }: { dataUrl: string | undefined }) {
+  const source = useMemo(() => ({ uri: dataUrl }), [dataUrl]);
+  return (
+    <View style={styles.msgImageWrapper}>
+      <Image source={source} style={styles.msgImage} resizeMode="contain" />
     </View>
   );
 }
@@ -666,70 +565,13 @@ const styles = StyleSheet.create({
     width: 280,
     height: 180,
   },
-  composer: {
-    padding: 14,
-    borderTopWidth: 1,
-    position: "relative",
+  emptyEmoji: {
+    fontSize: 32,
   },
-  quickBar: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 10,
-    flexWrap: "wrap",
-  },
-  pill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  pillText: {
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  attachBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  inputWrapper: {
-    flex: 1,
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 42,
-    maxHeight: 140,
-    justifyContent: "center",
-  },
-  input: {
-    fontSize: 13,
-    padding: 0,
-  },
-  sendBtn: {
-    paddingHorizontal: 18,
-    height: 42,
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  sendBtnActive: {
-    backgroundColor: "#6366f1",
-  },
-  sendBtnDisabled: {
-    backgroundColor: "#a5b4fc",
-  },
-  sendBtnText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "700",
+  switcherTabEmoji: {
+    fontSize: 12,
   },
 });
+
+const USER_ROW_STYLE = StyleSheet.flatten([styles.messageRow, styles.userRow]);
+const AGENT_ROW_STYLE = StyleSheet.flatten([styles.messageRow, styles.agentRow]);

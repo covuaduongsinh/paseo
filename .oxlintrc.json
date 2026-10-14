@@ -347,16 +347,6 @@
         ]
       }
     },
-    // Fork-only plugin written with raw StyleSheet props. Style arrays are exempt for the same reason
-    // as packages/app; inline objects and callbacks are debt that may only shrink out of this list.
-    {
-      "files": ["plugins/paseo-team-mode/client/**/*.{ts,tsx}"],
-      "rules": {
-        "react-perf/jsx-no-new-array-as-prop": "off",
-        "react-perf/jsx-no-new-object-as-prop": "off",
-        "react-perf/jsx-no-new-function-as-prop": "off"
-      }
-    },
     {
       "files": [
         "packages/app/src/components/ui/text-input/**/*.{ts,tsx}",

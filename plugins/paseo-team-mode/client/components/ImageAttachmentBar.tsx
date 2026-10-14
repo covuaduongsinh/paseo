@@ -1,5 +1,14 @@
-import React from "react";
-import { View, Text, StyleSheet, Pressable, Image, ScrollView } from "react-native";
+import React, { useCallback, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  Image,
+  ScrollView,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { ChatAttachment } from "../../shared/contracts.js";
 
@@ -9,61 +18,75 @@ interface ImageAttachmentBarProps {
   onRemove: (id: string) => void;
 }
 
+const HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 };
+
 export function ImageAttachmentBar({ attachments, theme, onRemove }: ImageAttachmentBarProps) {
+  const themed = useMemo(
+    () => ({
+      container: StyleSheet.flatten([
+        styles.container,
+        { backgroundColor: theme.colors.surface2, borderBottomColor: theme.colors.border },
+      ]),
+      card: StyleSheet.flatten([
+        styles.card,
+        { borderColor: theme.colors.border, backgroundColor: theme.colors.surface1 },
+      ]),
+      name: StyleSheet.flatten([styles.name, { color: theme.colors.foreground }]),
+    }),
+    [theme],
+  );
+
   if (!attachments || attachments.length === 0) return null;
 
   return (
-    <View
-      style={[
-        styles.container,
-        {
-          backgroundColor: theme.colors.surface2,
-          borderBottomColor: theme.colors.border,
-        },
-      ]}
-    >
+    <View style={themed.container}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
       >
         {attachments.map((att) => (
-          <View
+          <AttachmentCard
             key={att.id}
-            style={[
-              styles.card,
-              {
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surface1,
-              },
-            ]}
-          >
-            {att.dataUrl ? (
-              <Image source={{ uri: att.dataUrl }} style={styles.thumbnail} resizeMode="cover" />
-            ) : (
-              <View style={styles.thumbnailPlaceholder}>
-                <Text style={{ fontSize: 18 }}>🖼️</Text>
-              </View>
-            )}
-            <View style={styles.info}>
-              <Text
-                style={[styles.name, { color: theme.colors.foreground }]}
-                numberOfLines={1}
-                ellipsizeMode="middle"
-              >
-                {att.name ?? "Pasted Image"}
-              </Text>
-            </View>
-            <Pressable
-              style={styles.removeBtn}
-              onPress={() => onRemove(att.id)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={styles.removeIcon}>✕</Text>
-            </Pressable>
-          </View>
+            attachment={att}
+            cardStyle={themed.card}
+            nameStyle={themed.name}
+            onRemove={onRemove}
+          />
         ))}
       </ScrollView>
+    </View>
+  );
+}
+
+interface AttachmentCardProps {
+  attachment: ChatAttachment;
+  cardStyle: ViewStyle;
+  nameStyle: TextStyle;
+  onRemove: (id: string) => void;
+}
+
+function AttachmentCard({ attachment, cardStyle, nameStyle, onRemove }: AttachmentCardProps) {
+  const source = useMemo(() => ({ uri: attachment.dataUrl }), [attachment.dataUrl]);
+  const handleRemove = useCallback(() => onRemove(attachment.id), [onRemove, attachment.id]);
+
+  return (
+    <View style={cardStyle}>
+      {attachment.dataUrl ? (
+        <Image source={source} style={styles.thumbnail} resizeMode="cover" />
+      ) : (
+        <View style={styles.thumbnailPlaceholder}>
+          <Text style={styles.placeholderIcon}>🖼️</Text>
+        </View>
+      )}
+      <View style={styles.info}>
+        <Text style={nameStyle} numberOfLines={1} ellipsizeMode="middle">
+          {attachment.name ?? "Pasted Image"}
+        </Text>
+      </View>
+      <Pressable style={styles.removeBtn} onPress={handleRemove} hitSlop={HIT_SLOP}>
+        <Text style={styles.removeIcon}>✕</Text>
+      </Pressable>
     </View>
   );
 }
@@ -105,6 +128,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#e2e8f0",
     justifyContent: "center",
     alignItems: "center",
+  },
+  placeholderIcon: {
+    fontSize: 18,
   },
   info: {
     flex: 1,

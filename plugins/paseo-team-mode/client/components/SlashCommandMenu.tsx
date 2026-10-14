@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   Pressable,
   ScrollView,
   type PressableStateCallbackType,
+  type TextStyle,
+  type ViewStyle,
 } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 
@@ -83,7 +85,29 @@ interface SlashCommandMenuProps {
   onClose: () => void;
 }
 
+type HoverablePressState = PressableStateCallbackType & { hovered?: boolean };
+
 export function SlashCommandMenu({ query, theme, onSelect, onClose }: SlashCommandMenuProps) {
+  const themed = useMemo(
+    () => ({
+      container: StyleSheet.flatten([
+        styles.container,
+        { backgroundColor: theme.colors.surface1, borderColor: theme.colors.border },
+      ]),
+      header: StyleSheet.flatten([styles.header, { borderBottomColor: theme.colors.border }]),
+      headerTitle: StyleSheet.flatten([
+        styles.headerTitle,
+        { color: theme.colors.foregroundMuted },
+      ]),
+      closeText: { color: theme.colors.foregroundMuted, fontSize: 11 },
+      itemHover: StyleSheet.flatten([styles.item, { backgroundColor: theme.colors.surface2 }]),
+      cmdName: StyleSheet.flatten([styles.cmdName, { color: theme.colors.foreground }]),
+      cmdDesc: StyleSheet.flatten([styles.cmdDesc, { color: theme.colors.foregroundMuted }]),
+      selectHint: StyleSheet.flatten([styles.selectHint, { color: theme.colors.foregroundMuted }]),
+    }),
+    [theme],
+  );
+
   const cleanQuery = query.startsWith("/") ? query.slice(1).toLowerCase() : query.toLowerCase();
 
   const filteredCommands = SLASH_COMMANDS.filter((cmd) => {
@@ -98,51 +122,54 @@ export function SlashCommandMenu({ query, theme, onSelect, onClose }: SlashComma
   if (filteredCommands.length === 0) return null;
 
   return (
-    <View
-      style={[
-        styles.container,
-        {
-          backgroundColor: theme.colors.surface1,
-          borderColor: theme.colors.border,
-        },
-      ]}
-    >
-      <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
-        <Text style={[styles.headerTitle, { color: theme.colors.foregroundMuted }]}>
-          ⚡ Team Slash Commands ({filteredCommands.length})
-        </Text>
+    <View style={themed.container}>
+      <View style={themed.header}>
+        <Text style={themed.headerTitle}>⚡ Team Slash Commands ({filteredCommands.length})</Text>
         <Pressable onPress={onClose} style={styles.closeBtn}>
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>✕ ESC</Text>
+          <Text style={themed.closeText}>✕ ESC</Text>
         </Pressable>
       </View>
 
       <ScrollView style={styles.list} keyboardShouldPersistTaps="always">
         {filteredCommands.map((cmd) => (
-          <Pressable
-            key={cmd.command}
-            style={({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
-              styles.item,
-              hovered && { backgroundColor: theme.colors.surface2 },
-            ]}
-            onPress={() => onSelect(cmd)}
-          >
-            <View style={styles.iconWrapper}>
-              <Text style={styles.icon}>{cmd.icon}</Text>
-            </View>
-            <View style={styles.infoWrapper}>
-              <Text style={[styles.cmdName, { color: theme.colors.foreground }]}>{cmd.label}</Text>
-              <Text
-                style={[styles.cmdDesc, { color: theme.colors.foregroundMuted }]}
-                numberOfLines={1}
-              >
-                {cmd.description}
-              </Text>
-            </View>
-            <Text style={[styles.selectHint, { color: theme.colors.foregroundMuted }]}>↵</Text>
-          </Pressable>
+          <CommandRow key={cmd.command} command={cmd} themed={themed} onSelect={onSelect} />
         ))}
       </ScrollView>
     </View>
+  );
+}
+
+interface CommandRowProps {
+  command: SlashCommand;
+  themed: {
+    itemHover: ViewStyle;
+    cmdName: TextStyle;
+    cmdDesc: TextStyle;
+    selectHint: TextStyle;
+  };
+  onSelect: (command: SlashCommand) => void;
+}
+
+function CommandRow({ command, themed, onSelect }: CommandRowProps) {
+  const handlePress = useCallback(() => onSelect(command), [onSelect, command]);
+  const rowStyle = useCallback(
+    ({ hovered }: HoverablePressState) => (hovered ? themed.itemHover : styles.item),
+    [themed.itemHover],
+  );
+
+  return (
+    <Pressable style={rowStyle} onPress={handlePress}>
+      <View style={styles.iconWrapper}>
+        <Text style={styles.icon}>{command.icon}</Text>
+      </View>
+      <View style={styles.infoWrapper}>
+        <Text style={themed.cmdName}>{command.label}</Text>
+        <Text style={themed.cmdDesc} numberOfLines={1}>
+          {command.description}
+        </Text>
+      </View>
+      <Text style={themed.selectHint}>↵</Text>
+    </Pressable>
   );
 }
 

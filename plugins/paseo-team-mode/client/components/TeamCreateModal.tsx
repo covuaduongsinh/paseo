@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   Pressable,
   StyleSheet,
   ScrollView,
-  type StyleProp,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
@@ -53,6 +52,179 @@ function newTeammate(fields: Omit<Teammate, "key">): Teammate {
   return { key: `tm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, ...fields };
 }
 
+type Isolation = NewTeamInput["workspaceIsolation"];
+
+const FALLBACK_PROVIDERS: ProviderOption[] = [
+  {
+    id: "claude",
+    name: "Claude Code",
+    status: "available",
+    models: [
+      { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" },
+      { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet" },
+    ],
+  },
+  {
+    id: "antigravity",
+    name: "Antigravity",
+    status: "available",
+    models: [
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+      { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" },
+    ],
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    status: "available",
+    models: [
+      { id: "gpt-4o", label: "GPT-4o" },
+      { id: "o3-mini", label: "o3-mini" },
+    ],
+  },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    status: "available",
+    models: [
+      { id: "deepseek-r1", label: "DeepSeek R1" },
+      { id: "qwen-2.5-coder-32b", label: "Qwen 2.5 Coder" },
+    ],
+  },
+];
+
+/** The four looks a selectable chip can take: container and text, selected or not. */
+interface ChipStyles {
+  on: ViewStyle;
+  off: ViewStyle;
+  textOn: TextStyle;
+  textOff: TextStyle;
+}
+
+interface CreateModalStyles {
+  modalContainer: ViewStyle;
+  modalHeader: ViewStyle;
+  title: TextStyle;
+  closeIcon: TextStyle;
+  label: TextStyle;
+  input: TextStyle;
+  radioOn: ViewStyle;
+  radioOff: ViewStyle;
+  radioTextOn: TextStyle;
+  radioTextOff: TextStyle;
+  leaderSection: ViewStyle;
+  leaderTitle: TextStyle;
+  sublabel: TextStyle;
+  sublabelSpaced: TextStyle;
+  leaderProviderChip: ChipStyles;
+  leaderModelChip: ChipStyles;
+  memberCard: ViewStyle;
+  inputSmall: TextStyle;
+  teammateProviderChip: ChipStyles;
+  teammateModelChip: ChipStyles;
+  modalActions: ViewStyle;
+  cancelBtn: ViewStyle;
+  cancelText: TextStyle;
+}
+
+function createModalStyles(theme: PluginSurfaceProps["theme"]): CreateModalStyles {
+  const { colors } = theme;
+  const radio = (active: boolean): ViewStyle =>
+    StyleSheet.flatten([
+      styles.radioBtn,
+      active && styles.radioBtnActive,
+      { borderColor: colors.border },
+    ]);
+  const radioText = (active: boolean): TextStyle =>
+    StyleSheet.flatten([styles.radioText, { color: active ? "#6366f1" : colors.foregroundMuted }]);
+  const chip = (
+    base: ViewStyle,
+    active: ViewStyle,
+    text: TextStyle,
+    palette: { border: string; textOn: string; textOff: string },
+  ): ChipStyles => ({
+    on: StyleSheet.flatten([base, active, { borderColor: palette.border }]),
+    off: StyleSheet.flatten([base, { borderColor: colors.border }]),
+    textOn: StyleSheet.flatten([text, { color: palette.textOn }]),
+    textOff: StyleSheet.flatten([text, { color: palette.textOff }]),
+  });
+  const leaderPalette = { border: "#6366f1", textOn: "#818cf8" };
+  const teammatePalette = { border: "#10b981", textOn: "#34d399" };
+
+  return {
+    modalContainer: StyleSheet.flatten([
+      styles.modalContainer,
+      { backgroundColor: colors.surface1, borderColor: colors.border },
+    ]),
+    modalHeader: StyleSheet.flatten([styles.modalHeader, { borderBottomColor: colors.border }]),
+    title: StyleSheet.flatten([styles.title, { color: colors.foreground }]),
+    closeIcon: StyleSheet.flatten([styles.closeIcon, { color: colors.foregroundMuted }]),
+    label: StyleSheet.flatten([styles.label, { color: colors.foreground }]),
+    input: StyleSheet.flatten([
+      styles.input,
+      {
+        color: colors.foreground,
+        borderColor: colors.border,
+        backgroundColor: colors.surface2,
+      },
+    ]),
+    radioOn: radio(true),
+    radioOff: radio(false),
+    radioTextOn: radioText(true),
+    radioTextOff: radioText(false),
+    leaderSection: StyleSheet.flatten([
+      styles.memberSection,
+      { backgroundColor: colors.surface2, borderColor: "#6366f1" },
+    ]),
+    leaderTitle: StyleSheet.flatten([styles.sectionTitle, { color: "#818cf8" }]),
+    sublabel: StyleSheet.flatten([styles.sublabel, { color: colors.foregroundMuted }]),
+    sublabelSpaced: StyleSheet.flatten([
+      styles.sublabel,
+      { color: colors.foregroundMuted, marginTop: 8 },
+    ]),
+    leaderProviderChip: chip(
+      styles.providerChip,
+      styles.providerChipActive,
+      styles.providerChipText,
+      {
+        ...leaderPalette,
+        textOff: colors.foreground,
+      },
+    ),
+    leaderModelChip: chip(styles.modelChip, styles.modelChipActive, styles.modelChipText, {
+      ...leaderPalette,
+      textOff: colors.foregroundMuted,
+    }),
+    memberCard: StyleSheet.flatten([
+      styles.memberCard,
+      { backgroundColor: colors.surface2, borderColor: colors.border },
+    ]),
+    inputSmall: StyleSheet.flatten([
+      styles.inputSmall,
+      {
+        color: colors.foreground,
+        borderColor: colors.border,
+        backgroundColor: colors.surface1,
+      },
+    ]),
+    teammateProviderChip: chip(
+      styles.providerChipMini,
+      styles.providerChipMiniActive,
+      styles.providerChipTextMini,
+      { ...teammatePalette, textOff: colors.foregroundMuted },
+    ),
+    teammateModelChip: chip(
+      styles.modelChipMini,
+      styles.modelChipMiniActive,
+      styles.modelChipTextMini,
+      { ...teammatePalette, textOff: colors.foregroundMuted },
+    ),
+    modalActions: StyleSheet.flatten([styles.modalActions, { borderTopColor: colors.border }]),
+    cancelBtn: StyleSheet.flatten([styles.actionBtn, { borderColor: colors.border }]),
+    cancelText: { color: colors.foreground },
+  };
+}
+
 export function TeamCreateModal(props: TeamCreateModalProps) {
   if (!props.visible) return null;
   return <TeamCreateModalContent {...props} />;
@@ -61,12 +233,13 @@ export function TeamCreateModal(props: TeamCreateModalProps) {
 // Hooks live here so they run on every render; the early return above would change their count.
 function TeamCreateModalContent({ theme, onClose, onCreate }: TeamCreateModalProps) {
   const [teamName, setTeamName] = useState("");
-  const [isolation, setIsolation] = useState<"shared" | "worktree">("shared");
+  const [isolation, setIsolation] = useState<Isolation>("shared");
   const [leaderProvider, setLeaderProvider] = useState(DEFAULT_LEADER_PROVIDER);
   const [leaderModel, setLeaderModel] = useState("claude-3-7-sonnet");
   const [availableProviders, setAvailableProviders] = useState<ProviderOption[]>([]);
 
   const listProviders = useRpc(listProvidersRpc);
+  const themed = useMemo(() => createModalStyles(theme), [theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,72 +274,45 @@ function TeamCreateModalContent({ theme, onClose, onCreate }: TeamCreateModalPro
     }),
   ]);
 
-  const providerList =
-    availableProviders.length > 0
-      ? availableProviders
-      : [
-          {
-            id: "claude",
-            name: "Claude Code",
-            status: "available",
-            models: [
-              { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" },
-              { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet" },
-            ],
-          },
-          {
-            id: "antigravity",
-            name: "Antigravity",
-            status: "available",
-            models: [
-              { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-              { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" },
-            ],
-          },
-          {
-            id: "codex",
-            name: "Codex",
-            status: "available",
-            models: [
-              { id: "gpt-4o", label: "GPT-4o" },
-              { id: "o3-mini", label: "o3-mini" },
-            ],
-          },
-          {
-            id: "opencode",
-            name: "OpenCode",
-            status: "available",
-            models: [
-              { id: "deepseek-r1", label: "DeepSeek R1" },
-              { id: "qwen-2.5-coder-32b", label: "Qwen 2.5 Coder" },
-            ],
-          },
-        ];
+  const providerList = useMemo(
+    () => (availableProviders.length > 0 ? availableProviders : FALLBACK_PROVIDERS),
+    [availableProviders],
+  );
 
-  const handleAddTeammate = () => {
-    const nextIdx = (teammates.length + 1) % MEMBER_COLOR_PALETTE.length;
-    const defaultProvider = providerList[0]?.id ?? "claude";
-    const defaultModel = providerList[0]?.models?.[0]?.id ?? "default";
-    setTeammates([
-      ...teammates,
-      newTeammate({
-        name: `Teammate ${teammates.length + 1}`,
-        provider: defaultProvider,
-        model: defaultModel,
-        colorIndex: nextIdx,
-      }),
-    ]);
-  };
+  const handleAddTeammate = useCallback(() => {
+    setTeammates((prev) => {
+      const defaultProvider = providerList[0]?.id ?? "claude";
+      const defaultModel = providerList[0]?.models?.[0]?.id ?? "default";
+      return [
+        ...prev,
+        newTeammate({
+          name: `Teammate ${prev.length + 1}`,
+          provider: defaultProvider,
+          model: defaultModel,
+          colorIndex: (prev.length + 1) % MEMBER_COLOR_PALETTE.length,
+        }),
+      ];
+    });
+  }, [providerList]);
 
-  const handleUpdateTeammate = (key: string, patch: TeammatePatch) => {
+  const handleUpdateTeammate = useCallback((key: string, patch: TeammatePatch) => {
     setTeammates((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
-  };
+  }, []);
 
-  const handleRemoveTeammate = (key: string) => {
+  const handleRemoveTeammate = useCallback((key: string) => {
     setTeammates((prev) => prev.filter((t) => t.key !== key));
-  };
+  }, []);
 
-  const handleSubmit = () => {
+  const handleSelectLeaderProvider = useCallback(
+    (providerId: string) => {
+      setLeaderProvider(providerId);
+      const firstModel = providerList.find((p) => p.id === providerId)?.models[0];
+      if (firstModel) setLeaderModel(firstModel.id);
+    },
+    [providerList],
+  );
+
+  const handleSubmit = useCallback(() => {
     if (!teamName.trim()) return;
 
     const slots = [
@@ -192,40 +338,25 @@ function TeamCreateModalContent({ theme, onClose, onCreate }: TeamCreateModalPro
       slots,
     });
     onClose();
-  };
+  }, [teamName, leaderProvider, leaderModel, teammates, isolation, onCreate, onClose]);
 
   const currentLeaderProviderObj = providerList.find((p) => p.id === leaderProvider);
 
   return (
     <View style={styles.backdrop}>
-      <View
-        style={[
-          styles.modalContainer,
-          {
-            backgroundColor: theme.colors.surface1,
-            borderColor: theme.colors.border,
-          },
-        ]}
-      >
-        <View style={[styles.modalHeader, { borderBottomColor: theme.colors.border }]}>
-          <Text style={[styles.title, { color: theme.colors.foreground }]}>Create New Team</Text>
+      <View style={themed.modalContainer}>
+        <View style={themed.modalHeader}>
+          <Text style={themed.title}>Create New Team</Text>
           <Pressable onPress={onClose} style={styles.closeBtn}>
-            <Text style={[styles.closeIcon, { color: theme.colors.foregroundMuted }]}>✕</Text>
+            <Text style={themed.closeIcon}>✕</Text>
           </Pressable>
         </View>
 
         <ScrollView style={styles.scrollArea}>
           <View style={styles.formGroup}>
-            <Text style={[styles.label, { color: theme.colors.foreground }]}>Team Name</Text>
+            <Text style={themed.label}>Team Name</Text>
             <TextInput
-              style={[
-                styles.input,
-                {
-                  color: theme.colors.foreground,
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.surface2,
-                },
-              ]}
+              style={themed.input}
               placeholder="e.g. Fullstack Feature Team"
               placeholderTextColor={theme.colors.foregroundMuted}
               value={teamName}
@@ -234,141 +365,72 @@ function TeamCreateModalContent({ theme, onClose, onCreate }: TeamCreateModalPro
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={[styles.label, { color: theme.colors.foreground }]}>Workspace Mode</Text>
+            <Text style={themed.label}>Workspace Mode</Text>
             <View style={styles.radioRow}>
-              <Pressable
-                style={[
-                  styles.radioBtn,
-                  isolation === "shared" && styles.radioBtnActive,
-                  { borderColor: theme.colors.border },
-                ]}
-                onPress={() => setIsolation("shared")}
-              >
-                <Text
-                  style={[
-                    styles.radioText,
-                    {
-                      color: isolation === "shared" ? "#6366f1" : theme.colors.foregroundMuted,
-                    },
-                  ]}
-                >
-                  Shared Workspace
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.radioBtn,
-                  isolation === "worktree" && styles.radioBtnActive,
-                  { borderColor: theme.colors.border },
-                ]}
-                onPress={() => setIsolation("worktree")}
-              >
-                <Text
-                  style={[
-                    styles.radioText,
-                    {
-                      color: isolation === "worktree" ? "#6366f1" : theme.colors.foregroundMuted,
-                    },
-                  ]}
-                >
-                  Git Worktree Isolation
-                </Text>
-              </Pressable>
+              <RadioOption
+                value="shared"
+                label="Shared Workspace"
+                selected={isolation === "shared"}
+                themed={themed}
+                onSelect={setIsolation}
+              />
+              <RadioOption
+                value="worktree"
+                label="Git Worktree Isolation"
+                selected={isolation === "worktree"}
+                themed={themed}
+                onSelect={setIsolation}
+              />
             </View>
           </View>
 
           {/* Leader Configuration */}
-          <View
-            style={[
-              styles.memberSection,
-              { backgroundColor: theme.colors.surface2, borderColor: "#6366f1" },
-            ]}
-          >
+          <View style={themed.leaderSection}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: "#818cf8" }]}>
-                👑 Leader (Orchestrator)
-              </Text>
+              <Text style={themed.leaderTitle}>👑 Leader (Orchestrator)</Text>
             </View>
 
-            <Text style={[styles.sublabel, { color: theme.colors.foregroundMuted }]}>
-              Select Provider:
-            </Text>
+            <Text style={themed.sublabel}>Select Provider:</Text>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               style={styles.providerScroll}
             >
-              {providerList.map((p) => {
-                const isSelected = leaderProvider === p.id;
-                return (
-                  <Pressable
-                    key={p.id}
-                    onPress={() => {
-                      setLeaderProvider(p.id);
-                      if (p.models && p.models.length > 0) {
-                        setLeaderModel(p.models[0]!.id);
-                      }
-                    }}
-                    style={[
-                      styles.providerChip,
-                      isSelected && styles.providerChipActive,
-                      { borderColor: isSelected ? "#6366f1" : theme.colors.border },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.providerChipText,
-                        { color: isSelected ? "#818cf8" : theme.colors.foreground },
-                      ]}
-                    >
-                      {p.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+              {providerList.map((p) => (
+                <Chip
+                  key={p.id}
+                  value={p.id}
+                  label={p.name}
+                  selected={leaderProvider === p.id}
+                  chipStyles={themed.leaderProviderChip}
+                  onSelect={handleSelectLeaderProvider}
+                />
+              ))}
             </ScrollView>
 
-            <Text style={[styles.sublabel, { color: theme.colors.foregroundMuted, marginTop: 8 }]}>
-              Select Model:
-            </Text>
+            <Text style={themed.sublabelSpaced}>Select Model:</Text>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               style={styles.providerScroll}
             >
-              {currentLeaderProviderObj?.models?.map((m) => {
-                const isSelected = leaderModel === m.id;
-                return (
-                  <Pressable
-                    key={m.id}
-                    onPress={() => setLeaderModel(m.id)}
-                    style={[
-                      styles.modelChip,
-                      isSelected && styles.modelChipActive,
-                      { borderColor: isSelected ? "#6366f1" : theme.colors.border },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.modelChipText,
-                        { color: isSelected ? "#818cf8" : theme.colors.foregroundMuted },
-                      ]}
-                    >
-                      {m.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+              {currentLeaderProviderObj?.models?.map((m) => (
+                <Chip
+                  key={m.id}
+                  value={m.id}
+                  label={m.label}
+                  selected={leaderModel === m.id}
+                  chipStyles={themed.leaderModelChip}
+                  onSelect={setLeaderModel}
+                />
+              ))}
             </ScrollView>
           </View>
 
           {/* Teammates Configuration */}
           <View style={styles.formGroup}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.label, { color: theme.colors.foreground }]}>
-                Teammates ({teammates.length})
-              </Text>
+              <Text style={themed.label}>Teammates ({teammates.length})</Text>
               <Pressable onPress={handleAddTeammate} style={styles.addBtn}>
                 <Text style={styles.addBtnText}>+ Add Teammate</Text>
               </Pressable>
@@ -379,22 +441,20 @@ function TeamCreateModalContent({ theme, onClose, onCreate }: TeamCreateModalPro
                 key={tm.key}
                 teammate={tm}
                 providers={providerList}
-                theme={theme}
-                onChange={(patch) => handleUpdateTeammate(tm.key, patch)}
-                onRemove={() => handleRemoveTeammate(tm.key)}
+                themed={themed}
+                placeholderColor={theme.colors.foregroundMuted}
+                onChange={handleUpdateTeammate}
+                onRemove={handleRemoveTeammate}
               />
             ))}
           </View>
         </ScrollView>
 
-        <View style={[styles.modalActions, { borderTopColor: theme.colors.border }]}>
-          <Pressable
-            onPress={onClose}
-            style={[styles.actionBtn, { borderColor: theme.colors.border }]}
-          >
-            <Text style={{ color: theme.colors.foreground }}>Cancel</Text>
+        <View style={themed.modalActions}>
+          <Pressable onPress={onClose} style={themed.cancelBtn}>
+            <Text style={themed.cancelText}>Cancel</Text>
           </Pressable>
-          <Pressable onPress={handleSubmit} style={[styles.actionBtn, styles.primaryBtn]}>
+          <Pressable onPress={handleSubmit} style={PRIMARY_ACTION_STYLE}>
             <Text style={styles.primaryBtnText}>Create Team</Text>
           </Pressable>
         </View>
@@ -403,56 +463,98 @@ function TeamCreateModalContent({ theme, onClose, onCreate }: TeamCreateModalPro
   );
 }
 
+interface RadioOptionProps {
+  value: Isolation;
+  label: string;
+  selected: boolean;
+  themed: CreateModalStyles;
+  onSelect: (value: Isolation) => void;
+}
+
+function RadioOption({ value, label, selected, themed, onSelect }: RadioOptionProps) {
+  const handlePress = useCallback(() => onSelect(value), [onSelect, value]);
+  return (
+    <Pressable style={selected ? themed.radioOn : themed.radioOff} onPress={handlePress}>
+      <Text style={selected ? themed.radioTextOn : themed.radioTextOff}>{label}</Text>
+    </Pressable>
+  );
+}
+
+interface ChipProps {
+  value: string;
+  label: string;
+  selected: boolean;
+  chipStyles: ChipStyles;
+  onSelect: (value: string) => void;
+}
+
+function Chip({ value, label, selected, chipStyles, onSelect }: ChipProps) {
+  const handlePress = useCallback(() => onSelect(value), [onSelect, value]);
+  return (
+    <Pressable onPress={handlePress} style={selected ? chipStyles.on : chipStyles.off}>
+      <Text style={selected ? chipStyles.textOn : chipStyles.textOff}>{label}</Text>
+    </Pressable>
+  );
+}
+
 interface TeammateCardProps {
   teammate: Teammate;
   providers: ProviderOption[];
-  theme: PluginSurfaceProps["theme"];
-  onChange: (patch: TeammatePatch) => void;
-  onRemove: () => void;
+  themed: CreateModalStyles;
+  placeholderColor: string;
+  onChange: (key: string, patch: TeammatePatch) => void;
+  onRemove: (key: string) => void;
 }
 
-function TeammateCard({ teammate, providers, theme, onChange, onRemove }: TeammateCardProps) {
+function TeammateCard({
+  teammate,
+  providers,
+  themed,
+  placeholderColor,
+  onChange,
+  onRemove,
+}: TeammateCardProps) {
+  const { key } = teammate;
   const providerModels = providers.find((p) => p.id === teammate.provider)?.models;
+
+  const handleName = useCallback((name: string) => onChange(key, { name }), [onChange, key]);
+  const handleSelectProvider = useCallback(
+    (providerId: string) => {
+      const firstModel = providers.find((p) => p.id === providerId)?.models[0];
+      onChange(
+        key,
+        firstModel ? { provider: providerId, model: firstModel.id } : { provider: providerId },
+      );
+    },
+    [onChange, key, providers],
+  );
+  const handleSelectModel = useCallback(
+    (model: string) => onChange(key, { model }),
+    [onChange, key],
+  );
+  const handleRemove = useCallback(() => onRemove(key), [onRemove, key]);
+
   return (
-    <View
-      style={[
-        styles.memberCard,
-        { backgroundColor: theme.colors.surface2, borderColor: theme.colors.border },
-      ]}
-    >
-      <View style={{ flex: 1, gap: 6 }}>
+    <View style={themed.memberCard}>
+      <View style={styles.memberBody}>
         <TextInput
-          style={[
-            styles.inputSmall,
-            {
-              color: theme.colors.foreground,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surface1,
-            },
-          ]}
+          style={themed.inputSmall}
           value={teammate.name}
-          onChangeText={(name) => onChange({ name })}
+          onChangeText={handleName}
           placeholder="Teammate Name"
-          placeholderTextColor={theme.colors.foregroundMuted}
+          placeholderTextColor={placeholderColor}
         />
 
         {/* Provider selector for teammate */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {providers.map((p) => (
-            <MiniChip
+            <Chip
               key={p.id}
+              value={p.id}
               label={p.name}
               selected={teammate.provider === p.id}
-              theme={theme}
-              chipStyle={styles.providerChipMini}
-              activeChipStyle={styles.providerChipMiniActive}
-              textStyle={styles.providerChipTextMini}
-              onPress={() => {
-                const firstModel = p.models[0];
-                onChange(
-                  firstModel ? { provider: p.id, model: firstModel.id } : { provider: p.id },
-                );
-              }}
+              chipStyles={themed.teammateProviderChip}
+              onSelect={handleSelectProvider}
             />
           ))}
         </ScrollView>
@@ -460,59 +562,22 @@ function TeammateCard({ teammate, providers, theme, onChange, onRemove }: Teamma
         {/* Model selector for teammate */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {providerModels?.map((m) => (
-            <MiniChip
+            <Chip
               key={m.id}
+              value={m.id}
               label={m.label}
               selected={teammate.model === m.id}
-              theme={theme}
-              chipStyle={styles.modelChipMini}
-              activeChipStyle={styles.modelChipMiniActive}
-              textStyle={styles.modelChipTextMini}
-              onPress={() => onChange({ model: m.id })}
+              chipStyles={themed.teammateModelChip}
+              onSelect={handleSelectModel}
             />
           ))}
         </ScrollView>
       </View>
 
-      <Pressable onPress={onRemove} style={styles.removeBtn}>
+      <Pressable onPress={handleRemove} style={styles.removeBtn}>
         <Text style={styles.removeBtnText}>✕</Text>
       </Pressable>
     </View>
-  );
-}
-
-interface MiniChipProps {
-  label: string;
-  selected: boolean;
-  theme: PluginSurfaceProps["theme"];
-  chipStyle: StyleProp<ViewStyle>;
-  activeChipStyle: StyleProp<ViewStyle>;
-  textStyle: StyleProp<TextStyle>;
-  onPress: () => void;
-}
-
-function MiniChip({
-  label,
-  selected,
-  theme,
-  chipStyle,
-  activeChipStyle,
-  textStyle,
-  onPress,
-}: MiniChipProps) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        chipStyle,
-        selected && activeChipStyle,
-        { borderColor: selected ? "#10b981" : theme.colors.border },
-      ]}
-    >
-      <Text style={[textStyle, { color: selected ? "#34d399" : theme.colors.foregroundMuted }]}>
-        {label}
-      </Text>
-    </Pressable>
   );
 }
 
@@ -734,4 +799,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+  memberBody: {
+    flex: 1,
+    gap: 6,
+  },
 });
+
+const PRIMARY_ACTION_STYLE = StyleSheet.flatten([styles.actionBtn, styles.primaryBtn]);

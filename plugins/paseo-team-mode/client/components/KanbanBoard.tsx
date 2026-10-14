@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import { View, Text, StyleSheet, ScrollView, type TextStyle, type ViewStyle } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { TeamTask, TeamSlot, TeamTaskStatus } from "../../shared/contracts.js";
 import { getSlotColor } from "../theme/member-colors.js";
@@ -17,6 +17,19 @@ const COLUMNS: { key: TeamTaskStatus; label: string; color: string }[] = [
   { key: "done", label: "Done", color: "#10b981" },
 ];
 
+const NO_TASKS: TeamTask[] = [];
+
+interface KanbanStyles {
+  column: ViewStyle;
+  colTitle: TextStyle;
+  badge: TextStyle;
+  taskCard: ViewStyle;
+  taskTitle: TextStyle;
+  taskDesc: TextStyle;
+  unassigned: TextStyle;
+  emptyText: TextStyle;
+}
+
 export function KanbanBoard({ tasks, slots, theme }: KanbanBoardProps) {
   const slotMap = useMemo(() => {
     const map = new Map<string, TeamSlot>();
@@ -24,102 +37,141 @@ export function KanbanBoard({ tasks, slots, theme }: KanbanBoardProps) {
     return map;
   }, [slots]);
 
+  const tasksByStatus = useMemo(() => {
+    const groups = new Map<TeamTaskStatus, TeamTask[]>();
+    for (const task of tasks) {
+      const group = groups.get(task.status);
+      if (group) group.push(task);
+      else groups.set(task.status, [task]);
+    }
+    return groups;
+  }, [tasks]);
+
+  const themed = useMemo<KanbanStyles>(
+    () => ({
+      column: StyleSheet.flatten([
+        styles.column,
+        { backgroundColor: theme.colors.surface2, borderColor: theme.colors.border },
+      ]),
+      colTitle: StyleSheet.flatten([styles.colTitle, { color: theme.colors.foreground }]),
+      badge: StyleSheet.flatten([styles.badge, { color: theme.colors.foregroundMuted }]),
+      taskCard: StyleSheet.flatten([
+        styles.taskCard,
+        { backgroundColor: theme.colors.surface1, borderColor: theme.colors.border },
+      ]),
+      taskTitle: StyleSheet.flatten([styles.taskTitle, { color: theme.colors.foreground }]),
+      taskDesc: StyleSheet.flatten([styles.taskDesc, { color: theme.colors.foregroundMuted }]),
+      unassigned: StyleSheet.flatten([
+        styles.unassignedText,
+        { color: theme.colors.foregroundMuted },
+      ]),
+      emptyText: StyleSheet.flatten([styles.emptyText, { color: theme.colors.foregroundMuted }]),
+    }),
+    [theme],
+  );
+
   return (
     <ScrollView horizontal style={styles.container} contentContainerStyle={styles.columnsWrapper}>
-      {COLUMNS.map((col) => {
-        const colTasks = tasks.filter((t) => t.status === col.key);
-        return (
-          <View
-            key={col.key}
-            style={[
-              styles.column,
-              {
-                backgroundColor: theme.colors.surface2,
-                borderColor: theme.colors.border,
-              },
-            ]}
-          >
-            <View style={styles.colHeader}>
-              <View style={[styles.statusDot, { backgroundColor: col.color }]} />
-              <Text style={[styles.colTitle, { color: theme.colors.foreground }]}>{col.label}</Text>
-              <Text style={[styles.badge, { color: theme.colors.foregroundMuted }]}>
-                {colTasks.length}
-              </Text>
-            </View>
-
-            <ScrollView style={styles.taskList} showsVerticalScrollIndicator={false}>
-              {colTasks.map((task) => {
-                const slot = task.assignedSlotId ? slotMap.get(task.assignedSlotId) : undefined;
-                const slotColor = slot ? getSlotColor(slot.colorIndex) : undefined;
-
-                return (
-                  <View
-                    key={task.id}
-                    style={[
-                      styles.taskCard,
-                      {
-                        backgroundColor: theme.colors.surface1,
-                        borderColor: theme.colors.border,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.taskTitle, { color: theme.colors.foreground }]}>
-                      {task.title}
-                    </Text>
-                    {task.description ? (
-                      <Text
-                        style={[styles.taskDesc, { color: theme.colors.foregroundMuted }]}
-                        numberOfLines={3}
-                      >
-                        {task.description}
-                      </Text>
-                    ) : null}
-
-                    {task.blockerReason ? (
-                      <View style={styles.blockerBox}>
-                        <Text style={styles.blockerText}>⚠️ {task.blockerReason}</Text>
-                      </View>
-                    ) : null}
-
-                    <View style={styles.cardFooter}>
-                      {slot ? (
-                        <View
-                          style={[
-                            styles.slotPill,
-                            {
-                              backgroundColor: slotColor?.badgeBg,
-                              borderColor: slotColor?.border,
-                            },
-                          ]}
-                        >
-                          <Text style={[styles.slotName, { color: slotColor?.text }]}>
-                            {slot.name}
-                          </Text>
-                        </View>
-                      ) : (
-                        <Text
-                          style={[styles.unassignedText, { color: theme.colors.foregroundMuted }]}
-                        >
-                          Unassigned
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                );
-              })}
-
-              {colTasks.length === 0 ? (
-                <View style={styles.emptyCol}>
-                  <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                    No tasks
-                  </Text>
-                </View>
-              ) : null}
-            </ScrollView>
-          </View>
-        );
-      })}
+      {COLUMNS.map((col) => (
+        <KanbanColumn
+          key={col.key}
+          column={col}
+          tasks={tasksByStatus.get(col.key) ?? NO_TASKS}
+          slotMap={slotMap}
+          themed={themed}
+        />
+      ))}
     </ScrollView>
+  );
+}
+
+interface KanbanColumnProps {
+  column: (typeof COLUMNS)[number];
+  tasks: TeamTask[];
+  slotMap: Map<string, TeamSlot>;
+  themed: KanbanStyles;
+}
+
+function KanbanColumn({ column, tasks, slotMap, themed }: KanbanColumnProps) {
+  const dotStyle = useMemo(
+    () => StyleSheet.flatten([styles.statusDot, { backgroundColor: column.color }]),
+    [column.color],
+  );
+
+  return (
+    <View style={themed.column}>
+      <View style={styles.colHeader}>
+        <View style={dotStyle} />
+        <Text style={themed.colTitle}>{column.label}</Text>
+        <Text style={themed.badge}>{tasks.length}</Text>
+      </View>
+
+      <ScrollView style={styles.taskList} showsVerticalScrollIndicator={false}>
+        {tasks.map((task) => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            slot={task.assignedSlotId ? slotMap.get(task.assignedSlotId) : undefined}
+            themed={themed}
+          />
+        ))}
+
+        {tasks.length === 0 ? (
+          <View style={styles.emptyCol}>
+            <Text style={themed.emptyText}>No tasks</Text>
+          </View>
+        ) : null}
+      </ScrollView>
+    </View>
+  );
+}
+
+interface TaskCardProps {
+  task: TeamTask;
+  slot: TeamSlot | undefined;
+  themed: KanbanStyles;
+}
+
+function TaskCard({ task, slot, themed }: TaskCardProps) {
+  const slotColor = slot ? getSlotColor(slot.colorIndex) : undefined;
+  const pillStyle = useMemo(
+    () =>
+      StyleSheet.flatten([
+        styles.slotPill,
+        { backgroundColor: slotColor?.badgeBg, borderColor: slotColor?.border },
+      ]),
+    [slotColor?.badgeBg, slotColor?.border],
+  );
+  const slotNameStyle = useMemo(
+    () => StyleSheet.flatten([styles.slotName, { color: slotColor?.text }]),
+    [slotColor?.text],
+  );
+
+  return (
+    <View style={themed.taskCard}>
+      <Text style={themed.taskTitle}>{task.title}</Text>
+      {task.description ? (
+        <Text style={themed.taskDesc} numberOfLines={3}>
+          {task.description}
+        </Text>
+      ) : null}
+
+      {task.blockerReason ? (
+        <View style={styles.blockerBox}>
+          <Text style={styles.blockerText}>⚠️ {task.blockerReason}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.cardFooter}>
+        {slot ? (
+          <View style={pillStyle}>
+            <Text style={slotNameStyle}>{slot.name}</Text>
+          </View>
+        ) : (
+          <Text style={themed.unassigned}>Unassigned</Text>
+        )}
+      </View>
+    </View>
   );
 }
 
